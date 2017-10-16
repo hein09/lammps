@@ -3,11 +3,11 @@
 # this file will be copied to Makefile.lammps
 EXTRAMAKE = Makefile.lammps.empty
 
-# top level directory of Quantum ESPRESSO 5.4.1 or later
-QETOPDIR=$(HOME)/compile/espresso
+# top level directory of Quantum ESPRESSO 6.2 or later
+QETOPDIR=$(HOME)/q-e
 
 # import compiler settings from Quantum ESPRESSO
-sinclude $(QETOPDIR)/make.sys
+sinclude $(QETOPDIR)/make.inc
 
 # FLAGS for c++ with IntelMPI when QE was compiled with Intel Fortran
 MPICXX=icpc
@@ -20,7 +20,10 @@ MPILIBS=-openmp  -L${INTELMPI_HOME}/lib64  -lz  -lifcore -L$(I_MPI_ROOT)/lib64 -
 PWOBJS = \
 $(QETOPDIR)/COUPLE/src/libqecouple.a \
 $(QETOPDIR)/PW/src/libpw.a \
-$(QETOPDIR)/Modules/libqemod.a
+$(QETOPDIR)/Modules/libqemod.a \
+$(QETOPDIR)/KS_Solvers/Davidson/libdavid.a \
+$(QETOPDIR)/KS_Solvers/CG/libcg.a \
+$(QETOPDIR)/UtilXlib/libutil.a
 # part 2: lo-level libraries for all of Q-E
 LIBOBJS = \
 $(QETOPDIR)/FFTXlib/libqefft.a \
