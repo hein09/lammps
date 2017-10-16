@@ -18,10 +18,6 @@
 #include "libqecouple.h"
 #include "libqmmm.h"
 
-#ifndef QE_LIBCOUPLE_API_VERSION
-#define QE_LIBCOUPLE_API_VERSION 1
-#endif
-
 #if QE_LIBCOUPLE_API_VERSION != 1
 #error "Unsupported QE coupling API. Want API version 1."
 #endif
@@ -79,7 +75,7 @@ int main(int argc, char **argv)
         const char *msg;
 
         msg = check_qmmm_config(&qmmmcfg);
-        
+
         if ((nqm < 1) || (qmmmcfg.nmm < 2)) {
             msg = "Need at least 2 MM and 1 QM processes";
         }
@@ -236,7 +232,7 @@ int main(int argc, char **argv)
             }
         }
 
-        /* parse additional support command line flags for LAMMPS */  
+        /* parse additional support command line flags for LAMMPS */
 
         if (qmmmcfg.maarg != NULL) {
             char *ptr = strtok(qmmmcfg.maarg,delim);
@@ -252,14 +248,14 @@ int main(int argc, char **argv)
                 }
             } while ((ptr=strtok(NULL,delim)));
         }
-        char *lmpargs[5];
+        char *lmpargs[3];
         lmpargs[0] = strdup("MM Master");
-        lmpargs[1] = strdup("-log");
-        lmpargs[2] = strdup("none");
-        lmpargs[3] = strdup("-echo");
-        lmpargs[4] = strdup("screen");
+        //lmpargs[1] = strdup("-log");
+        //lmpargs[2] = strdup("none");
+        lmpargs[1] = strdup("-echo");
+        lmpargs[2] = strdup("screen");
 
-        lammps_open(5, lmpargs, intra_comm, &lmp);
+        lammps_open(3, lmpargs, intra_comm, &lmp);
         lammps_file(lmp,qmmmcfg.mainp);
 
         char runcmd[1024];
@@ -308,10 +304,10 @@ int main(int argc, char **argv)
             }
         }
 
-        /* parse additional support command line flags for LAMMPS */  
+        /* parse additional support command line flags for LAMMPS */
 
         if (qmmmcfg.slarg != NULL) {
-            char *ptr = strtok(qmmmcfg.maarg,delim);
+            char *ptr = strtok(qmmmcfg.slarg,delim);
             do {
                 if ((strncmp("-sf",ptr,3) == 0)
                            || (strncmp("-suffix",ptr,7) == 0)) {
@@ -325,14 +321,14 @@ int main(int argc, char **argv)
             } while ((ptr=strtok(NULL,delim)));
         }
 
-        char *lmpargs[5];
+        char *lmpargs[3];
         lmpargs[0] = strdup("MM slave");
-        lmpargs[1] = strdup("-log");
-        lmpargs[2] = strdup("none");
-        lmpargs[3] = strdup("-echo");
-        lmpargs[4] = strdup("screen");
+        //lmpargs[1] = strdup("-log");
+        //lmpargs[2] = strdup("none");
+        lmpargs[1] = strdup("-echo");
+        lmpargs[2] = strdup("screen");
 
-        lammps_open(5, lmpargs, intra_comm, &lmp);
+        lammps_open(3, lmpargs, intra_comm, &lmp);
         lammps_file(lmp,qmmmcfg.slinp);
 
         char runcmd[64];
