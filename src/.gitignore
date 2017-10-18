@@ -993,6 +993,8 @@
 /pair_peri_ves.h
 /pair_quip.cpp
 /pair_quip.h
+/pair_rdip.cpp
+/pair_rdip.h
 /pair_reaxc.cpp
 /pair_reaxc.h
 /pair_rebo.cpp
