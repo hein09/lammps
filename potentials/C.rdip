@@ -3,11 +3,6 @@
 # Cite as A. N. Kolmogorov, V. H. Crespi,
 # "Registry dependent interlayer potential for graphitic systems",
 # Phys. Rev. B 71 235415 (2005)
-10.238     A
-3.030      C
-15.71      C0
-12.29      C2
-4.933      C4
-0.578      delta
-3.34       z0
-3.629      lambda
+#
+# type (nneigh) A C C0 C2 C4 delta z0 lambda
+0.010238 0.003030 0.01571 0.01229 0.004933 0.578 3.34 3.629

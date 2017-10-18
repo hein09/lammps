@@ -61,7 +61,7 @@ PairRDIP::PairRDIP(LAMMPS *lmp) : Pair(lmp)
     one_coeff = 1;
     writedata = 1;
 
-    nneigh = 3;
+    param.nneigh = 3;
 }
 
 /* ----------------------------------------------------------------------
@@ -94,10 +94,10 @@ void PairRDIP::compute(int eflag, int vflag)
     const int *numneigh    = list->numneigh;
     int **firstneigh       = list->firstneigh;
 
-    const double maximum = z0 * z0 * 2.25;
+    const double maximum = param.z0 * param.z0 * 2.25;
     const double cut_sq = cutoff * cutoff;
-    const double delta_isq = 1.0/(delta * delta);
-    const double z0_6 = z0*z0*z0*z0*z0*z0;
+    const double delta_isq = 1.0/(param.delta * param.delta);
+    const double z0_6 = param.z0*param.z0*param.z0*param.z0*param.z0*param.z0;
 
     for (int ii=0; ii < inum; ++ii) {
         const int i      = ilist[ii];
@@ -113,16 +113,16 @@ void PairRDIP::compute(int eflag, int vflag)
          * distances between reference atom i
          * and nearest neighbors l
          */
-        double r_li_len[nneigh]; //squared, only needed for sorting
-        int    i_li[nneigh];
-        for (int l = 0; l < nneigh; ++l) {
+        double r_li_len[param.nneigh]; //squared, only needed for sorting
+        int    i_li[param.nneigh];
+        for (int l = 0; l < param.nneigh; ++l) {
             r_li_len[l] = maximum+l;
             i_li[l] = -1;
         }
 
         /* helper-atom or same type: determine next neighbors
          *
-         * keep `nneigh` nearest neighbors for calculation
+         * keep nearest neighbors for calculation
          * of surface normals
          */
         for (int jj = 0; jj < jnum; ++jj) {
@@ -137,7 +137,7 @@ void PairRDIP::compute(int eflag, int vflag)
 
                 int pos = -1;
                 // check whether l is one of nearest neighbors
-                for (int l=0; l<nneigh; ++l) {
+                for (int l=0; l<param.nneigh; ++l) {
                     if (rsq < r_li_len[l]) {
                         pos = l;
                         break;
@@ -145,7 +145,7 @@ void PairRDIP::compute(int eflag, int vflag)
                 }
                 // save index and length if needed
                 if (pos != -1) {
-                    for (int l = nneigh-1; l > pos; --l) {
+                    for (int l = param.nneigh-1; l > pos; --l) {
                         i_li[l] = i_li[l-1];
                         r_li_len[l] = r_li_len[l-1];
                     }
@@ -155,7 +155,7 @@ void PairRDIP::compute(int eflag, int vflag)
             }
         }
 
-        for (int l=0; l<nneigh; ++l) {
+        for (int l=0; l<param.nneigh; ++l) {
             if (i_li[l] == -1) {
                 char str[128];
                 sprintf(str, "Nearest neighbors could not be determined for atom %i", i);
@@ -163,8 +163,8 @@ void PairRDIP::compute(int eflag, int vflag)
             }
         }
 
-        double r_li[nneigh][3];
-        for (int l=0; l < nneigh; ++l) {
+        double r_li[param.nneigh][3];
+        for (int l=0; l < param.nneigh; ++l) {
             r_li[l][0] = xi[0] - x[ i_li[l] ][0];
             r_li[l][1] = xi[1] - x[ i_li[l] ][1];
             r_li[l][2] = xi[2] - x[ i_li[l] ][2];
@@ -174,9 +174,9 @@ void PairRDIP::compute(int eflag, int vflag)
          *
          * pairwise normal for nearest neighbors
          */
-        double n_lm[nneigh][3], n_lm_norm[nneigh][3], n_lm_ilen[nneigh];
-        for (int l=0; l < nneigh; ++l) {
-            int m = (l+1) < nneigh ? l+1 : 0;
+        double n_lm[param.nneigh][3], n_lm_norm[param.nneigh][3], n_lm_ilen[param.nneigh];
+        for (int l=0; l < param.nneigh; ++l) {
+            int m = (l+1) < param.nneigh ? l+1 : 0;
             vec_cross(r_li[l], r_li[m], n_lm[l]);
             n_lm_ilen[l] = 1.0 / sqrt(vec_dot(n_lm[l], n_lm[l]));
             n_lm_norm[l][0] = n_lm_ilen[l] * n_lm[l][0];
@@ -190,7 +190,7 @@ void PairRDIP::compute(int eflag, int vflag)
          * normalized average over normalized pairwise normals
          */
         double n_i[3] = {0, 0, 0};
-        for (int l=0; l < nneigh; ++l) {
+        for (int l=0; l < param.nneigh; ++l) {
             n_i[0] += n_lm_norm[l][0];
             n_i[1] += n_lm_norm[l][1];
             n_i[2] += n_lm_norm[l][2];
@@ -217,25 +217,25 @@ void PairRDIP::compute(int eflag, int vflag)
                 if (rsq < cut_sq) {
                     // Helper variables in j
                     const double r_ij_len   = sqrt(rsq);
-                    const double exp_V      = exp(-lambda * (r_ij_len - z0));
+                    const double exp_V      = exp(-param.lambda * (r_ij_len - param.z0));
                     const double ni_dot_rij = vec_dot(n_i_norm, r_ij);
                     const double rho_ij_sq  = rsq - ni_dot_rij*ni_dot_rij;
                     const double rho_ij     = sqrt(rho_ij_sq);
                     const double exp_f      = exp(rho_ij_sq * -delta_isq);
                     const double f_rho_ij   = exp_f *
-                        (C0 + C2 * rho_ij_sq * delta_isq +
-                         C4 * rho_ij_sq * rho_ij_sq * delta_isq * delta_isq);
+                        (param.C0 + param.C2 * rho_ij_sq * delta_isq +
+                         param.C4 * rho_ij_sq * rho_ij_sq * delta_isq * delta_isq);
                     const double df_rho_ij  = -2.0 * delta_isq * f_rho_ij
-                        + exp_f * (2 * C2 * delta_isq +
-                        4 * C4 * rho_ij_sq * delta_isq * delta_isq);
+                        + exp_f * (2 * param.C2 * delta_isq +
+                        4 * param.C4 * rho_ij_sq * delta_isq * delta_isq);
                     const double rn_ij[3] =
                         {(r_ij[0] - n_i_norm[0] * ni_dot_rij) * n_i_ilen,
                          (r_ij[1] - n_i_norm[1] * ni_dot_rij) * n_i_ilen,
                          (r_ij[2] - n_i_norm[2] * ni_dot_rij) * n_i_ilen};
 
                     // Helper variables in l
-                    double rn_ijlm[nneigh][3];
-                    for (int l=0; l < nneigh; ++l) {
+                    double rn_ijlm[param.nneigh][3];
+                    for (int l=0; l < param.nneigh; ++l) {
                         double nlm_dot_rnij = vec_dot(n_lm_norm[l], rn_ij);
                         rn_ijlm[l][0] = (rn_ij[0] - n_lm_norm[l][0] * nlm_dot_rnij) * n_lm_ilen[l];
                         rn_ijlm[l][1] = (rn_ij[1] - n_lm_norm[l][1] * nlm_dot_rnij) * n_lm_ilen[l];
@@ -253,8 +253,8 @@ void PairRDIP::compute(int eflag, int vflag)
                      * 1.0 * Exp*(r-n*dot)*df(rho_ij) (added only in ij)
                      *
                      */
-                    double tmp = 3 * A * z0_6 / (rsq*rsq*rsq*rsq)
-                        - lambda * exp_V * (0.5 * C + f_rho_ij) / r_ij_len;
+                    double tmp = 3 * param.A * z0_6 / (rsq*rsq*rsq*rsq)
+                        - param.lambda * exp_V * (0.5 * param.C + f_rho_ij) / r_ij_len;
                     double force_j[3] =
                         {tmp * r_ij[0] + exp_V * df_rho_ij * (r_ij[0] - n_i_norm[0] * ni_dot_rij),
                          tmp * r_ij[1] + exp_V * df_rho_ij * (r_ij[1] - n_i_norm[1] * ni_dot_rij),
@@ -264,10 +264,10 @@ void PairRDIP::compute(int eflag, int vflag)
                      *
                      * 1.0* (added only in ij)
                      */
-                    double force_l[nneigh][3];
-                    for (int l=0; l < nneigh; ++l) {
-                        int m = ((l+1) < nneigh) ? (l+1) : 0;
-                        int n = (l == 0) ? (nneigh-1) : (l-1);
+                    double force_l[param.nneigh][3];
+                    for (int l=0; l < param.nneigh; ++l) {
+                        int m = ((l+1) < param.nneigh) ? (l+1) : 0;
+                        int n = (l == 0) ? (param.nneigh-1) : (l-1);
                         double left[3], right[3];
                         vec_cross(r_li[m], rn_ijlm[l], left);
                         vec_cross(r_li[n], rn_ijlm[n], right);
@@ -279,7 +279,7 @@ void PairRDIP::compute(int eflag, int vflag)
                     for (int k=0; k < 3 ; ++k) {
                         f[i][k] += force_j[k];
                         f[j][k] -= force_j[k];
-                        for (int l=0; l<nneigh; ++l) {
+                        for (int l=0; l<param.nneigh; ++l) {
                             f[i_li[l]][k] -= force_l[l][k];
                             f[i][k] += force_l[l][k];
                         }
@@ -298,8 +298,8 @@ void PairRDIP::compute(int eflag, int vflag)
                          * countering the effect
                          */
                         evdwl =
-                            exp_V * (0.5 * C + f_rho_ij) -
-                            0.5 * A * z0_6 / (rsq * rsq * rsq);
+                            exp_V * (0.5 * param.C + f_rho_ij) -
+                            0.5 * param.A * z0_6 / (rsq * rsq * rsq);
                     } else {
                         evdwl = 0;
                     }
@@ -310,26 +310,14 @@ void PairRDIP::compute(int eflag, int vflag)
                                 evdwl, 0,
                                 force_j[0], force_j[1], force_j[2],
                                 r_ij[0], r_ij[1], r_ij[2]);
-                        //ev_tally_xyz_full(i, evdwl, 0,
-                        //    -force_j[0], -force_j[1], -force_j[2],
-                        //    -r_ij[0], -r_ij[1], -r_ij[2]);
-                        //ev_tally_xyz_full(j, evdwl, 0,
-                        //    force_j[0], force_j[1], force_j[2],
-                        //    r_ij[0], r_ij[1], r_ij[2]);
                     }
                     // Add virial terms for i-l interaction only when needed
                     if (vflag) {
-                        for (int l=0; l < nneigh; ++l) {
+                        for (int l=0; l < param.nneigh; ++l) {
                             ev_tally_xyz(i, i_li[l], nlocal, newton_pair,
                                     0, 0,
                                     force_l[l][0], force_l[l][1], force_l[l][2],
                                     -r_li[l][0], -r_li[l][1], -r_li[l][2]);
-                            //ev_tally_xyz_full(i, 0, 0,
-                            //    -force_l[l][0], -force_l[l][1], -force_l[l][2],
-                            //    r_li[l][0], r_li[l][1], r_li[l][2]);
-                            //ev_tally_xyz_full(i_li[l], 0, 0,
-                            //    force_l[l][0], force_l[l][1], force_l[l][2],
-                            //    -r_li[l][0], -r_li[l][1], -r_li[l][2]);
                         }
                     }
                 }
@@ -401,40 +389,12 @@ void PairRDIP::read_file(char *filename)
     }
 
     // read parameters
-    sscanf(s,"%lg",&A); // unit: meV
-    A *= 0.001;
-    fgets(s,MAXLINE,fp);
-    sscanf(s,"%lg",&C); // unit: meV
-    C *= 0.001;
-    fgets(s,MAXLINE,fp);
-    sscanf(s,"%lg",&C0); // unit: meV
-    C0 *= 0.001;
-    fgets(s,MAXLINE,fp);
-    sscanf(s,"%lg",&C2); // unit: meV
-    C2 *= 0.001;
-    fgets(s,MAXLINE,fp);
-    sscanf(s,"%lg",&C4); // unit: meV
-    C4 *= 0.001;
-    fgets(s,MAXLINE,fp);
-    sscanf(s,"%lg",&delta); //unit: Angstrom
-    delta = delta*force->angstrom;
-    fgets(s,MAXLINE,fp);
-    sscanf(s,"%lg",&z0);    //unit: Angstrom
-    z0 = z0*force->angstrom;
-    fgets(s,MAXLINE,fp);
-    sscanf(s,"%lg",&lambda); //unit: 1/Angstrom
-    lambda = lambda/force->angstrom;
+    sscanf(s,"%*s %*s %d %lg %lg %lg %lg %lg %lg %lg %lg",
+            &param.nneigh, &param.A, &param.C, &param.C0, &param.C2,
+            &param.C4, &param.delta, &param.z0, &param.lambda);
   }
 
-  // broadcast read-in and setup values
-  MPI_Bcast(&A,1,MPI_DOUBLE,0,world);
-  MPI_Bcast(&C,1,MPI_DOUBLE,0,world);
-  MPI_Bcast(&C0,1,MPI_DOUBLE,0,world);
-  MPI_Bcast(&C2,1,MPI_DOUBLE,0,world);
-  MPI_Bcast(&C4,1,MPI_DOUBLE,0,world);
-  MPI_Bcast(&delta,1,MPI_DOUBLE,0,world);
-  MPI_Bcast(&z0,1,MPI_DOUBLE,0,world);
-  MPI_Bcast(&lambda,1,MPI_DOUBLE,0,world);
+  MPI_Bcast(&param,sizeof(RDIPParam),MPI_BYTE,0,world);
 }
 
 /* ----------------------------------------------------------------------
@@ -551,14 +511,7 @@ void PairRDIP::read_restart(FILE *fp)
 void PairRDIP::write_restart_settings(FILE *fp)
 {
     fwrite(&cutoff,     sizeof(double),1,fp);
-    fwrite(&A,          sizeof(double),1,fp);
-    fwrite(&C,          sizeof(double),1,fp);
-    fwrite(&C0,         sizeof(double),1,fp);
-    fwrite(&C2,         sizeof(double),1,fp);
-    fwrite(&C4,         sizeof(double),1,fp);
-    fwrite(&delta,      sizeof(double),1,fp);
-    fwrite(&z0,         sizeof(double),1,fp);
-    fwrite(&lambda,     sizeof(double),1,fp);
+    fwrite(&param, sizeof(RDIPParam),1,fp);
 }
 
 /* ----------------------------------------------------------------------
@@ -569,22 +522,8 @@ void PairRDIP::read_restart_settings(FILE *fp)
 {
     if (comm->me == 0) {
        fread(&cutoff,     sizeof(double),1,fp);
-       fread(&A,          sizeof(double),1,fp);
-       fread(&C,          sizeof(double),1,fp);
-       fread(&C0,         sizeof(double),1,fp);
-       fread(&C2,         sizeof(double),1,fp);
-       fread(&C4,         sizeof(double),1,fp);
-       fread(&delta,      sizeof(double),1,fp);
-       fread(&z0,         sizeof(double),1,fp);
-       fread(&lambda,     sizeof(double),1,fp);
+       fread(&param,  sizeof(RDIPParam),1,fp);
     }
-     MPI_Bcast(&cutoff,     1,MPI_DOUBLE,0,world);
-     MPI_Bcast(&A,          1,MPI_DOUBLE,0,world);
-     MPI_Bcast(&C,          1,MPI_DOUBLE,0,world);
-     MPI_Bcast(&C0,         1,MPI_DOUBLE,0,world);
-     MPI_Bcast(&C2,         1,MPI_DOUBLE,0,world);
-     MPI_Bcast(&C4,         1,MPI_DOUBLE,0,world);
-     MPI_Bcast(&delta,      1,MPI_DOUBLE,0,world);
-     MPI_Bcast(&z0,         1,MPI_DOUBLE,0,world);
-     MPI_Bcast(&lambda,     1,MPI_DOUBLE,0,world);
+     MPI_Bcast(&cutoff,1,MPI_DOUBLE,0,world);
+     MPI_Bcast(&param,sizeof(RDIPParam),MPI_BYTE,0,world);
 }

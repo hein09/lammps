@@ -40,12 +40,14 @@ class PairRDIP : public Pair {
    void read_restart_settings(FILE *);
 
   private:
-   int nneigh;            // # of nearest neighbors
    int *map;              // # map of internal atom types
    double cutoff;
 
    // parameters for potential
-   double A, C, C0, C2, C4, delta, z0, lambda;
+   struct RDIPParam{
+       int nneigh;
+       double A, C, C0, C2, C4, delta, z0, lambda;
+   } param;
 
    void read_file(char *);
    void allocate();
