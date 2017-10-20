@@ -1,8 +1,10 @@
-# DATA: 2017-10-18 CONTRIBUTOR: Sebastian Gsänger, sebastian.gsaenger@fau.de
+# DATE: 2017-10-18 CONTRIBUTOR: Sebastian Gsänger, sebastian.gsaenger@fau.de
 #
 # Cite as A. N. Kolmogorov, V. H. Crespi,
 # "Registry dependent interlayer potential for graphitic systems",
 # Phys. Rev. B 71 235415 (2005)
 #
-# type (nneigh) A C C0 C2 C4 delta z0 lambda
-0.010238 0.003030 0.01571 0.01229 0.004933 0.578 3.34 3.629
+# type nneigh
+# typeA typeB A C C0 C2 C4 delta z0 lambda
+C 3
+C C 0.010238 0.003030 0.01571 0.01229 0.004933 0.578 3.34 3.629
