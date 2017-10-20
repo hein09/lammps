@@ -40,14 +40,18 @@ class PairRDIP : public Pair {
    void read_restart_settings(FILE *);
 
   private:
-   int *tmap, *nnmap;        // # map of internal atom types with nneigh
-   double cutoff, cut_neigh; //cutoff for interaction and NN-search
+   double cutoff;   //cutoff for interaction
+   int *tmap;       // map lammps to rdip types
+   struct RDIPType{
+       int nneigh;
+       double cut_neigh;
+   };
+   RDIPType *ntmap; // type information
 
-   // parameters for potential
    struct RDIPParam{
        double A, C, C0, C2, C4, delta, z0, lambda;
    };
-   RDIPParam **pmap;
+   RDIPParam **pmap; // pair interaction information
 
    void allocate();
 };

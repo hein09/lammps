@@ -74,7 +74,7 @@ PairRDIP::~PairRDIP()
     memory->destroy(setflag);
     memory->destroy(cutsq);
     memory->destroy(tmap);
-    memory->destroy(nnmap);
+    memory->destroy(ntmap);
     memory->destroy(pmap);
   }
 }
@@ -106,7 +106,8 @@ void PairRDIP::compute(int eflag, int vflag)
         const double *xi = x[i];
         const int *jlist = firstneigh[i];
         const int jnum   = numneigh[i];
-        const int nneigh = nnmap[itype];
+        const int nneigh = ntmap[itype].nneigh;
+        const double cut_neigh = ntmap[itype].cut_neigh;
 
         /* r_li:
          *
@@ -352,7 +353,7 @@ void PairRDIP::allocate()
 
     // create mapping for the atom types
     memory->create(tmap,n+1,"pair:tmap");
-    memory->create(nnmap,n+1,"pair:nnmap");
+    memory->create(ntmap,n+1,"pair:ntmap");
     memory->create(pmap,n+1,n+1,"pair:pmap");
 }
 
@@ -362,10 +363,9 @@ void PairRDIP::allocate()
 
 void PairRDIP::settings(int narg, char **arg)
 {
-  if (narg != 2) error->all(FLERR,"Illegal pair_style command");
+  if (narg != 1) error->all(FLERR,"Illegal pair_style command");
 
   cutoff = force->numeric(FLERR,arg[0]);
-  cut_neigh = force->numeric(FLERR,arg[1]);
 }
 
 /* ----------------------------------------------------------------------
@@ -400,8 +400,8 @@ void PairRDIP::coeff(int narg, char **arg)
 
     // read potential file
     if (comm->me == 0) {
-        char s[MAXLINE],t[MAXLINE];
-        std::map<std::string,int> nn_file_map;
+        char s[MAXLINE];
+        std::map<std::string,RDIPType> type_file_map;
         std::map<std::set<std::string>,RDIPParam> pair_file_map;
         std::set<std::string> fileset;
         if (comm->me == 0) {
@@ -414,14 +414,15 @@ void PairRDIP::coeff(int narg, char **arg)
             while (1) {
                 fgets(s, MAXLINE, fp);
                 if (feof(fp)) break;
-                if ((s != NULL) && (t != NULL)) {
+                if (s != NULL) {
                     if (s[0] == '#') continue;
-                    int test, nneigh;
+                    int test;
+                    RDIPType t;
                     char itype[12], jtype[12];
                     //try to parse atom type
-                    test = sscanf(s,"%s %d", &itype, &nneigh);
-                    if (test == 2) {
-                        nn_file_map[itype] = nneigh;
+                    test = sscanf(s,"%s %d %lg", &itype, &t.nneigh, &t.cut_neigh);
+                    if (test == 3) {
+                        type_file_map[itype] = t;
                         fileset.insert(itype);
                         continue;
                     }
@@ -456,7 +457,7 @@ void PairRDIP::coeff(int narg, char **arg)
         // set setflag and parameters for all atom types
         int count = 0;
         for (int i = 1; i <= ntyp; ++i) {
-            if(tmap[i] > 0) nnmap[i] = nn_file_map[commvec[i]];
+            if(tmap[i] > 0) ntmap[i] = type_file_map[commvec[i]];
             for (int j = i; j <= ntyp; j++) {
                 if (!tmap[i] || !tmap[j]){
                     setflag[i][j] = 0;
@@ -477,7 +478,7 @@ void PairRDIP::coeff(int narg, char **arg)
         if (count == 0) error->all(FLERR,"All interaction is turned off");
     }
     MPI_Bcast(tmap,ntyp+1,MPI_INT,0,world);
-    MPI_Bcast(nnmap,ntyp+1,MPI_INT,0,world);
+    MPI_Bcast(ntmap,sizeof(RDIPType)*(ntyp+1),MPI_BYTE,0,world);
     for(int i = 1; i <= ntyp; ++i) {
         MPI_Bcast(pmap[i],sizeof(RDIPParam)*(ntyp+1),MPI_BYTE,0,world);
         MPI_Bcast(setflag[i],ntyp+1,MPI_INT,0,world);
@@ -518,7 +519,7 @@ void PairRDIP::write_restart(FILE *fp)
 
     for (int i=1; i <= atom->ntypes; i++) {
         fwrite(&tmap[i], sizeof(int), 1, fp);
-        fwrite(&nnmap[i],sizeof(int), 1, fp);
+        fwrite(&ntmap[i],sizeof(RDIPType),1,fp);
         for (int j = i; j <= atom->ntypes; j++) {
             fwrite(&pmap[i][j], sizeof(RDIPParam), 1, fp);
             fwrite(&setflag[i][j], sizeof(int), 1, fp);
@@ -541,7 +542,7 @@ void PairRDIP::read_restart(FILE *fp)
     for (int i=1; i <= ntyp; i++) {
         if (me==0) {
             fread(&tmap[i],sizeof(int),1,fp);
-            fread(&nnmap[i],sizeof(int),1,fp);
+            fread(&ntmap[i],sizeof(RDIPType),1,fp);
         }
         for (int j=i; j <= ntyp; j++) {
             if (me==0) {
@@ -551,7 +552,7 @@ void PairRDIP::read_restart(FILE *fp)
         }
     }
     MPI_Bcast(tmap, ntyp+1, MPI_INT,0,world);
-    MPI_Bcast(nnmap, ntyp+1, MPI_INT,0,world);
+    MPI_Bcast(ntmap, sizeof(RDIPType)*(ntyp+1),MPI_BYTE,0,world);
     for (int i=1; i<=ntyp; ++i) {
         MPI_Bcast(pmap[i],sizeof(RDIPParam)*(ntyp+1),MPI_BYTE,0,world);
         MPI_Bcast(setflag[i],ntyp+1,MPI_INT,0,world);
@@ -565,7 +566,6 @@ void PairRDIP::read_restart(FILE *fp)
 void PairRDIP::write_restart_settings(FILE *fp)
 {
     fwrite(&cutoff, sizeof(double),1,fp);
-    fwrite(&cut_neigh, sizeof(double),1,fp);
 }
 
 /* ----------------------------------------------------------------------
@@ -576,8 +576,6 @@ void PairRDIP::read_restart_settings(FILE *fp)
 {
     if (comm->me == 0) {
         fread(&cutoff,     sizeof(double),1,fp);
-        fread(&cut_neigh,  sizeof(double),1,fp);
     }
     MPI_Bcast(&cutoff,1,MPI_DOUBLE,0,world);
-    MPI_Bcast(&cut_neigh,1,MPI_DOUBLE,0,world);
 }
