@@ -312,9 +312,6 @@ FixQMMM::FixQMMM(LAMMPS *lmp, int narg, char **arg) :
   Fix(lmp, narg, arg)
 {
 
-  if (narg > 5)
-    error->all(FLERR,"Illegal fix qmmm command");
-
   if (strcmp(update->unit_style,"metal") == 0) {
     qmmm_fscale = 1.0/23.0609;
   } else if (strcmp(update->unit_style,"real") == 0) {
@@ -326,14 +323,6 @@ FixQMMM::FixQMMM(LAMMPS *lmp, int narg, char **arg) :
 
   if (atom->tag_consecutive() == 0)
     error->all(FLERR,"Fix qmmm requires consecutive atom IDs");
-
-  /* define ec coupling group */
-  mm_group = group->find("all");
-  if ((narg == 5) && (0 == strcmp(arg[0],"couple"))) {
-#if 0  /* ignore ES coupling group for now */
-    mm_group = group->find(arg[4]);
-#endif
-  } else if (narg != 3) error->all(FLERR,"Illegal fix qmmm command");
 
   if (mm_group == -1)
     error->all(FLERR,"Could not find fix qmmm couple group ID");
@@ -359,12 +348,50 @@ FixQMMM::FixQMMM(LAMMPS *lmp, int narg, char **arg) :
   qm_coord = mm_coord = qm_force = mm_force = NULL;
   qm_charge =NULL;
   mm_type = NULL;
+  nlink = 0;
+  link_map = NULL;
 
   do_init = 1;
 
   /* storage required to communicate a single coordinate or force. */
   size_one = sizeof(struct commdata);
   maxbuf = -1;
+
+  /* define link atoms */
+  if ((narg > 3) && (!strcmp(arg[3],"link"))) {
+    if (qmmm_role != QMMM_ROLE_MASTER)
+      error->all(FLERR,"Link atoms need to be defined on Master only");
+    nlink = force->inumeric(FLERR,arg[4]);
+    memory->create(link_map, nlink, "qmmm:link_map");
+    for (int i=0; i < nlink; ++i) {
+      link_group &l = link_map[i];
+      l.mm    = force->inumeric(FLERR, arg[5+3*i]);
+      l.qm    = force->inumeric(FLERR, arg[6+3*i]);
+      l.scale = force->numeric(FLERR,  arg[7+3*i]);
+    }
+    if ((comm->me == 0) && (verbose > 0)) {
+      const char fmt[] = "QMMM: %d link-atom pairs given\n";
+      if (screen)  fprintf(screen, fmt, nlink);
+      if (logfile) fprintf(logfile, fmt, nlink);
+      if (verbose > 1) {
+        const char fmt[] = "MM-id: %d, QM-id: %d, scale-factor: %f\n";
+        for (int i=0; i < nlink; ++i) {
+            const link_group &lg = link_map[i];
+            if (screen)  fprintf(screen, fmt, lg.mm, lg.qm, lg.scale);
+            if (logfile) fprintf(logfile, fmt, lg.mm, lg.qm, lg.scale);
+        }
+      }
+    }
+  } else if (narg != 3) error->all(FLERR,"Illegal fix qmmm command");
+
+  /* define ec coupling group */
+  mm_group = group->find("all");
+#if 0
+  if ((narg == 5) && (0 == strcmp(arg[0],"couple"))) {
+  /* ignore ES coupling group for now */
+    mm_group = group->find(arg[4]);
+  } else if (narg != 3) error->all(FLERR,"Illegal fix qmmm command");
+#endif
 }
 
 /*********************************
@@ -384,6 +411,7 @@ FixQMMM::~FixQMMM()
   memory->destroy(qm_coord);
   memory->destroy(qm_force);
   memory->destroy(qm_charge);
+  memory->destroy(link_map);
 }
 
 /* ---------------------------------------------------------------------- */
@@ -421,6 +449,10 @@ void FixQMMM::exchange_positions()
  - create hash table that connects master list index with tag
  - collect necessary data and get master list index via hash table
 */
+  if ((comm->me == 0) && (verbose > 0)) {
+    if (screen) fputs("QMMM: exchange positions\n",screen);
+    if (logfile) fputs("QMMM: exchange positions\n",logfile);
+  }
   if (comm->me == 0 && qmmm_role == QMMM_ROLE_MASTER) {
     int isend_buf[4];
     isend_buf[0] = natoms;
@@ -443,15 +475,6 @@ void FixQMMM::exchange_positions()
       celldata[8] = domain->yz;
       MPI_Send(celldata,  9, MPI_DOUBLE, 1, QMMM_TAG_CELL, qm_comm);
     }
-
-    if (verbose > 0) {
-      if (screen) fputs("QMMM: exchange positions\n",screen);
-      if (logfile) fputs("QMMM: exchange positions\n",logfile);
-    }
-  }
-
-  if (qmmm_role == QMMM_ROLE_MASTER) {
-    //TODO: should this be in exchange_forces?!
     /* check and potentially grow local communication buffers. */
     if (atom->nmax*size_one > maxbuf) {
       memory->destroy(comm_buf);
@@ -459,58 +482,72 @@ void FixQMMM::exchange_positions()
       comm_buf = memory->smalloc(maxbuf,"qmmm:comm_buf");
     }
 
-    if (comm->me == 0) {
-      //TODO: was kostet der alloc im vgl zum blockierten speicher?
-      double *mm_coord_all = (double *) calloc(3*natoms, sizeof(double));
-      double *mm_charge_all = (double *) calloc(natoms, sizeof(double));
-      int *mm_mask_all = (int *) calloc(natoms, sizeof(int));
+    double *mm_coord_all = (double *) calloc(3*natoms, sizeof(double));
+    double *mm_charge_all = (double *) calloc(natoms, sizeof(double));
+    int *mm_mask_all = (int *) calloc(natoms, sizeof(int));
 
-      // insert local atoms into comm buffer and global arrays
-      for (int i=0; i<nlocal; ++i) {
-        const int k = (int) tag[i]-1;
-        mm_mask_all[ k ] = -1;
-        if (mask[i] & groupbit) {
-          const int j = 3*taginthash_lookup((taginthash_t *)qm_idmap, tag[i]);
-          if (j != 3*HASH_FAIL) {
-            qm_coord[j]   = x[i][0];
-            qm_coord[j+1] = x[i][1];
-            qm_coord[j+2] = x[i][2];
-            qm_charge[j/3] = charge[i];
-            mm_mask_all[k] = type[i];
-          }
+    // insert local atoms into comm buffer and global arrays
+    for (int i=0; i<nlocal; ++i) {
+      const int k = (int) tag[i]-1;
+      mm_mask_all[ k ] = -1;
+      if (mask[i] & groupbit) {
+        const int j = 3*taginthash_lookup((taginthash_t *)qm_idmap, tag[i]);
+        if (j != 3*HASH_FAIL) {
+          qm_coord[j]   = x[i][0];
+          qm_coord[j+1] = x[i][1];
+          qm_coord[j+2] = x[i][2];
+          qm_charge[j/3] = charge[i];
+          mm_mask_all[k] = type[i];
         }
-        mm_coord_all[3*k + 0] = x[i][0];
-        mm_coord_all[3*k + 1] = x[i][1];
-        mm_coord_all[3*k + 2] = x[i][2];
-        mm_charge_all[k] = charge[i];
       }
-      // TODO: wie sind die daten verteilt? muss sammeln here.
-      // sonst nix parallel MM
-
-      /* done collecting coordinates, send it to dependent codes */
-      /* to QM code */
-      if (qmmm_mode == QMMM_MODE_MECH) {
-          MPI_Send(qm_coord, 3*num_qm, MPI_DOUBLE, 1, QMMM_TAG_COORD, qm_comm);
-      } else {
-          MPI_Send(qm_coord, 3*num_qm, MPI_DOUBLE, 1, QMMM_TAG_COORD, qm_comm);
-          MPI_Send(qm_charge, num_qm, MPI_DOUBLE, 1, QMMM_TAG_CHARGE, qm_comm);
-          MPI_Send(mm_charge_all, natoms, MPI_DOUBLE, 1, QMMM_TAG_COORD, qm_comm);
-          MPI_Send(mm_coord_all, 3*natoms, MPI_DOUBLE, 1, QMMM_TAG_COORD, qm_comm);
-          MPI_Send(mm_mask_all, natoms, MPI_INT, 1, QMMM_TAG_COORD, qm_comm);
-          MPI_Send(type, natoms, MPI_INT, 1, QMMM_TAG_TYPE, qm_comm);
-          MPI_Send(mass, ntypes+1, MPI_DOUBLE, 1, QMMM_TAG_MASS, qm_comm);
-      }
-
-      /* to MM slave code */
-      MPI_Send(qm_coord, 3*num_qm, MPI_DOUBLE, 1, QMMM_TAG_COORD, mm_comm);
-
-      free(mm_coord_all);
-      free(mm_charge_all);
-      free(mm_mask_all);
-
-    } else {
-      error->one(FLERR,"Cannot handle parallel MM (yet)");
+      mm_coord_all[3*k + 0] = x[i][0];
+      mm_coord_all[3*k + 1] = x[i][1];
+      mm_coord_all[3*k + 2] = x[i][2];
+      mm_charge_all[k] = charge[i];
     }
+
+    /* modify coordinates for link-atoms */
+    for (int i=0; i<nlink; ++i) {
+      const link_group &lg = link_map[i];
+      // mm/qm: index in qm-atoms
+      const int mm = 3*taginthash_lookup((taginthash_t *)qm_idmap, lg.mm);
+      const int qm = 3*taginthash_lookup((taginthash_t *)qm_idmap, lg.qm);
+      // mm_loc/qm_loc: index in mm-master-atoms
+      int mm_loc = 0, qm_loc = 0;
+      for (int j=0; j<nlocal; ++j) {
+        if (tag[j] == lg.mm) mm_loc=j;
+        else if (tag[j] == lg.qm) qm_loc=j;
+        if (mm_loc&&qm_loc) break;
+      }
+      double dir[3] = {x[mm_loc][0] - x[qm_loc][0],
+                       x[mm_loc][1] - x[qm_loc][1],
+                       x[mm_loc][2] - x[qm_loc][2]};
+      qm_coord[mm+0] = qm_coord[qm+0] + lg.scale*dir[0];
+      qm_coord[mm+1] = qm_coord[qm+1] + lg.scale*dir[1];
+      qm_coord[mm+2] = qm_coord[qm+2] + lg.scale*dir[2];
+    }
+
+    /* done collecting coordinates, send it to dependent codes */
+    /* to QM code */
+    if (qmmm_mode == QMMM_MODE_MECH) {
+        MPI_Send(qm_coord, 3*num_qm, MPI_DOUBLE, 1, QMMM_TAG_COORD, qm_comm);
+    } else {
+        MPI_Send(qm_coord, 3*num_qm, MPI_DOUBLE, 1, QMMM_TAG_COORD, qm_comm);
+        MPI_Send(qm_charge, num_qm, MPI_DOUBLE, 1, QMMM_TAG_CHARGE, qm_comm);
+        MPI_Send(mm_charge_all, natoms, MPI_DOUBLE, 1, QMMM_TAG_COORD, qm_comm);
+        MPI_Send(mm_coord_all, 3*natoms, MPI_DOUBLE, 1, QMMM_TAG_COORD, qm_comm);
+        MPI_Send(mm_mask_all, natoms, MPI_INT, 1, QMMM_TAG_COORD, qm_comm);
+        MPI_Send(type, natoms, MPI_INT, 1, QMMM_TAG_TYPE, qm_comm);
+        MPI_Send(mass, ntypes+1, MPI_DOUBLE, 1, QMMM_TAG_MASS, qm_comm);
+    }
+
+    /* to MM slave code */
+    MPI_Send(qm_coord, 3*num_qm, MPI_DOUBLE, 1, QMMM_TAG_COORD, mm_comm);
+
+    free(mm_coord_all);
+    free(mm_charge_all);
+    free(mm_mask_all);
+
   } else if (qmmm_role == QMMM_ROLE_SLAVE) {
 
     MPI_Recv(qm_coord, 3*num_qm, MPI_DOUBLE, 0, QMMM_TAG_COORD, mm_comm, MPI_STATUS_IGNORE);
@@ -559,7 +596,7 @@ void FixQMMM::exchange_forces()
       // receive QM forces from QE
       MPI_Recv(qm_force,3*num_qm,MPI_DOUBLE,1,QMMM_TAG_FORCE,qm_comm,MPI_STATUS_IGNORE);
       // receive ec contribution to MM forces from QE
-      if (qmmm_mode == QMMM_MODE_ELEC) 
+      if (qmmm_mode == QMMM_MODE_ELEC)
           MPI_Recv(mm_force_all,3*natoms,MPI_DOUBLE,1,QMMM_TAG_FORCE2,qm_comm,MPI_STATUS_IGNORE);
       // receive MM forces from LAMMPS
       MPI_Recv( mm_force_on_qm_atoms, 3*num_qm,MPI_DOUBLE,1,QMMM_TAG_FORCE,mm_comm,MPI_STATUS_IGNORE);
@@ -595,6 +632,24 @@ void FixQMMM::exchange_forces()
     // Inefficient... use buffers.
     if (qmmm_mode == QMMM_MODE_ELEC)
         MPI_Bcast(mm_force_all,natoms*3,MPI_DOUBLE,0,world);
+
+    /* distribute forces of link-atoms */
+    for (int i=0; i<nlink; ++i) {
+      const link_group &lg = link_map[i];
+      commdata *mm=NULL, *qm=NULL;
+      for (int j=0; j<num_qm; ++j) {
+        if(buf[j].tag == lg.mm) mm = &buf[j];
+        if(buf[j].tag == lg.qm) qm = &buf[j];
+        if (mm && qm) break;
+      }
+      const commdata tmp = *mm;
+      mm->x *= lg.scale;
+      mm->y *= lg.scale;
+      mm->z *= lg.scale;
+      qm->x += (1-lg.scale)*tmp.x;
+      qm->y += (1-lg.scale)*tmp.y;
+      qm->z += (1-lg.scale)*tmp.z;
+    }
 
     /* apply forces resulting from QM/MM coupling */
     if (qmmm_mode == QMMM_MODE_MECH) {
@@ -676,7 +731,6 @@ void FixQMMM::init()
         // receive number of QM atoms from QE
         MPI_Irecv(nat, 1, MPI_INT, 1, QMMM_TAG_SIZE, qm_comm, req);
         // receive number of QM atoms from MM slave
-        // TODO: subtractive only?
         MPI_Irecv(nat+1, 1, MPI_INT, 1, QMMM_TAG_SIZE, mm_comm, req+1);
         MPI_Waitall(2,req,MPI_STATUS_IGNORE);
       }
@@ -686,7 +740,6 @@ void FixQMMM::init()
       num_qm = group->count(igroup);
       num_mm = group->count(mm_group);
 
-      // TODO: subtractive only!
       // consistency check. the fix group and the QM and MM slave
       if ((num_qm != nat[0]) || (num_qm != nat[1]))
         error->all(FLERR,"Inconsistent number of QM/MM atoms");

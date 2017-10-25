@@ -73,6 +73,13 @@ class FixQMMM : public Fix {
   int    maxbuf;      // size of communication buffer
   int    do_init;     // flag for one time initialization
   int    verbose;     // print level (<= 0 means no output)
+
+  struct link_group{
+      int mm, qm;
+      double scale;
+  };
+  int        nlink;     // # of link-groups
+  link_group *link_map; // list of link-groups
 };
 
 }
