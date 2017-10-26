@@ -482,28 +482,46 @@ void FixQMMM::exchange_positions()
       comm_buf = memory->smalloc(maxbuf,"qmmm:comm_buf");
     }
 
-    double *mm_coord_all = (double *) calloc(3*natoms, sizeof(double));
-    double *mm_charge_all = (double *) calloc(natoms, sizeof(double));
-    int *mm_mask_all = (int *) calloc(natoms, sizeof(int));
-
+    double *mm_coord_all = NULL;
+    double *mm_charge_all = NULL;
+    int *mm_mask_all = NULL;
     // insert local atoms into comm buffer and global arrays
-    for (int i=0; i<nlocal; ++i) {
-      const int k = (int) tag[i]-1;
-      mm_mask_all[ k ] = -1;
-      if (mask[i] & groupbit) {
-        const int j = 3*taginthash_lookup((taginthash_t *)qm_idmap, tag[i]);
-        if (j != 3*HASH_FAIL) {
-          qm_coord[j]   = x[i][0];
-          qm_coord[j+1] = x[i][1];
-          qm_coord[j+2] = x[i][2];
-          qm_charge[j/3] = charge[i];
-          mm_mask_all[k] = type[i];
+    if (qmmm_mode == QMMM_MODE_MECH) {
+      for (int i=0; i<nlocal; ++i) {
+        const int k = (int) tag[i]-1;
+        if (mask[i] & groupbit) {
+          const int j = 3*taginthash_lookup((taginthash_t *)qm_idmap, tag[i]);
+          if (j != 3*HASH_FAIL) {
+            qm_coord[j]   = x[i][0];
+            qm_coord[j+1] = x[i][1];
+            qm_coord[j+2] = x[i][2];
+            qm_charge[j/3] = charge[i];
+          }
         }
       }
-      mm_coord_all[3*k + 0] = x[i][0];
-      mm_coord_all[3*k + 1] = x[i][1];
-      mm_coord_all[3*k + 2] = x[i][2];
-      mm_charge_all[k] = charge[i];
+    } else if (qmmm_mode == QMMM_MODE_ELEC) {
+      mm_coord_all = (double *) calloc(3*natoms, sizeof(double));
+      mm_charge_all = (double *) calloc(natoms, sizeof(double));
+      mm_mask_all = (int *) calloc(natoms, sizeof(int));
+
+      for (int i=0; i<nlocal; ++i) {
+        const int k = (int) tag[i]-1;
+        mm_mask_all[ k ] = -1;
+        if (mask[i] & groupbit) {
+          const int j = 3*taginthash_lookup((taginthash_t *)qm_idmap, tag[i]);
+          if (j != 3*HASH_FAIL) {
+            qm_coord[j]   = x[i][0];
+            qm_coord[j+1] = x[i][1];
+            qm_coord[j+2] = x[i][2];
+            qm_charge[j/3] = charge[i];
+            mm_mask_all[k] = type[i];
+          }
+        }
+        mm_coord_all[3*k + 0] = x[i][0];
+        mm_coord_all[3*k + 1] = x[i][1];
+        mm_coord_all[3*k + 2] = x[i][2];
+        mm_charge_all[k] = charge[i];
+      }
     }
 
     /* modify coordinates for link-atoms */
@@ -544,9 +562,11 @@ void FixQMMM::exchange_positions()
     /* to MM slave code */
     MPI_Send(qm_coord, 3*num_qm, MPI_DOUBLE, 1, QMMM_TAG_COORD, mm_comm);
 
-    free(mm_coord_all);
-    free(mm_charge_all);
-    free(mm_mask_all);
+    if (qmmm_mode == QMMM_MODE_ELEC) {
+      free(mm_coord_all);
+      free(mm_charge_all);
+      free(mm_mask_all);
+    }
 
   } else if (qmmm_role == QMMM_ROLE_SLAVE) {
 
@@ -589,7 +609,9 @@ void FixQMMM::exchange_forces()
   if (qmmm_role == QMMM_ROLE_MASTER) {
     struct commdata *buf = static_cast<struct commdata *>(comm_buf);
 
-    double *mm_force_all = (double *) calloc(natoms*3, sizeof(double));
+    double *mm_force_all = NULL;
+    if (qmmm_mode == QMMM_MODE_ELEC)
+        mm_force_all = (double *) calloc(natoms*3, sizeof(double));
     double *mm_force_on_qm_atoms = qm_coord; // use qm_coord as a buffer
 
     if (comm->me == 0) {
@@ -606,25 +628,21 @@ void FixQMMM::exchange_forces()
       // so we need to apply the scaling factor to get to the
       // supported internal units ("metal" or "real")
       for (int i=0; i < num_qm; ++i) {
+        buf[i].tag = qm_remap[i];
+        buf[i].x = qmmm_fscale*qm_force[3*i+0] - mm_force_on_qm_atoms[3*i+0];
+        buf[i].y = qmmm_fscale*qm_force[3*i+1] - mm_force_on_qm_atoms[3*i+1];
+        buf[i].z = qmmm_fscale*qm_force[3*i+2] - mm_force_on_qm_atoms[3*i+2];
         if  (verbose > 1) {
            const char fmt[] = "[" TAGINT_FORMAT "]: QM(%g %g %g) MM(%g %g %g) /\\(%g %g %g)\n";
            if (screen) fprintf(screen, fmt, qm_remap[i],
                 qmmm_fscale*qm_force[3*i+0], qmmm_fscale*qm_force[3*i+1], qmmm_fscale*qm_force[3*i+2],
                 mm_force_on_qm_atoms[3*i+0], mm_force_on_qm_atoms[3*i+1], mm_force_on_qm_atoms[3*i+2],
-                qmmm_fscale*qm_force[3*i+0] - mm_force_on_qm_atoms[3*i+0],
-                qmmm_fscale*qm_force[3*i+1] - mm_force_on_qm_atoms[3*i+1],
-                qmmm_fscale*qm_force[3*i+2] - mm_force_on_qm_atoms[3*i+2]);
+                buf[i].x, buf[i].y, buf[i].z);
            if (logfile) fprintf(logfile, fmt, qm_remap[i],
                 qmmm_fscale*qm_force[3*i+0], qmmm_fscale*qm_force[3*i+1], qmmm_fscale*qm_force[3*i+2],
                 mm_force_on_qm_atoms[3*i+0], mm_force_on_qm_atoms[3*i+1], mm_force_on_qm_atoms[3*i+2],
-                qmmm_fscale*qm_force[3*i+0] - mm_force_on_qm_atoms[3*i+0],
-                qmmm_fscale*qm_force[3*i+1] - mm_force_on_qm_atoms[3*i+1],
-                qmmm_fscale*qm_force[3*i+2] - mm_force_on_qm_atoms[3*i+2]);
+                buf[i].x, buf[i].y, buf[i].z);
         }
-        buf[i].tag = qm_remap[i];
-        buf[i].x = qmmm_fscale*qm_force[3*i+0] - mm_force_on_qm_atoms[3*i+0];
-        buf[i].y = qmmm_fscale*qm_force[3*i+1] - mm_force_on_qm_atoms[3*i+1];
-        buf[i].z = qmmm_fscale*qm_force[3*i+2] - mm_force_on_qm_atoms[3*i+2];
       }
     }
     MPI_Bcast(comm_buf,num_qm*size_one,MPI_BYTE,0,world);
@@ -683,7 +701,7 @@ void FixQMMM::exchange_forces()
       }
     }
 
-    free(mm_force_all);
+    if (qmmm_mode == QMMM_MODE_ELEC) free(mm_force_all);
 
   } else if (qmmm_role == QMMM_ROLE_SLAVE) {
 
