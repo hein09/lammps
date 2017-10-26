@@ -164,6 +164,32 @@ void PairRDIP::compute(int eflag, int vflag)
             }
         }
 
+        // for nneigh > 3, need to sort the neighbors in pairs
+        if (nneigh>3) {
+            bool check[nneigh] = {};
+            int new_li[nneigh] = {};
+            int ja=0;
+            for (int count=0; count < nneigh; ++count) {
+                new_li[count] = i_li[ja];
+                check[ja] = true;
+                int mi = -1;
+                double md = -1;
+                for (int jb=0; jb<nneigh; ++jb) {
+                    if (check[jb]) continue;
+                    double r[3] =
+                        {x[ja][0] - x[jb][0],
+                         x[ja][1] - x[jb][1],
+                         x[ja][2] - x[jb][2]};
+                    double rsq = r[0]*r[0] + r[1]*r[1] + r[2]*r[2];
+                    if ((md<0) || (rsq<md)) {
+                        md = rsq;
+                        mi = jb;
+                    }
+                }
+                ja = mi;
+            }
+        }
+
         double r_li[nneigh][3];
         for (int l=0; l < nneigh; ++l) {
             r_li[l][0] = xi[0] - x[ i_li[l] ][0];
