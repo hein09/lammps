@@ -26,34 +26,34 @@ namespace LAMMPS_NS {
 
 class PairRDIP : public Pair {
   public:
-   PairRDIP(class LAMMPS *);
-   virtual ~PairRDIP();
+    PairRDIP(class LAMMPS *);
+    virtual ~PairRDIP();
 
-   virtual void compute(int, int);
-   void settings(int,char**);
-   void coeff(int,char**);
-   void init_style();
-   double init_one(int, int);
-   void read_restart(FILE *);
-   void write_restart(FILE *);
-   void write_restart_settings(FILE *);
-   void read_restart_settings(FILE *);
+    virtual void compute(int, int);
+    void settings(int,char**);
+    void coeff(int,char**);
+    void init_style();
+    double init_one(int, int);
+    void read_restart(FILE *);
+    void write_restart(FILE *);
+    void write_restart_settings(FILE *);
+    void read_restart_settings(FILE *);
 
   private:
-   double cutoff;   //cutoff for interaction
-   int *tmap;       // map lammps to rdip types
-   struct RDIPType{
-       int nneigh;
-       double cut_neigh;
-   };
-   RDIPType *ntmap; // type information
+    double cutoff;   //cutoff for interaction
+    int *tmap;       // map lammps to rdip types
+    struct RDIPType{
+      int nneigh;
+      double cut_neigh;
+    };
+    RDIPType *ntmap; // type information
 
-   struct RDIPParam{
-       double A, C, C0, C2, C4, delta, z0, lambda;
-   };
-   RDIPParam **pmap; // pair interaction information
+    struct RDIPParam{
+      double A, C, C0, C2, C4, delta, z0, lambda;
+    };
+    RDIPParam **pmap; // pair interaction information
 
-   void allocate();
+    void allocate();
 };
 
 }

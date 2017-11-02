@@ -91,6 +91,7 @@ pair_style kolmogorov/crespi/z, Jaap Kroes (Radboud U), jaapkroes at gmail dot c
 pair_style meam/spline, Alexander Stukowski (LLNL), alex at stukowski.com, 1 Feb 12
 pair_style meam/sw/spline, Robert Rudd (LLNL), robert.rudd at llnl.gov, 1 Oct 12
 pair_style morse/smooth/linear, Stefan Paquay (TU Eindhoven), stefanpaquay at gmail.com, 29 Feb 16
+pair_style rdip, Sebastian Gsaenger (FAU Erlangen), sebastian dot gsaenger at fau dot de, 27 Oct 17
 pair_style srp, Tim Sirk, tim.sirk at us.army.mil, 21 Nov 14
 pair_style tersoff/table, Luca Ferraro, luca.ferraro@caspur.it, 1 Dec 11
 pair_style momb, Kristen Fichthorn, Tonnam Balankura, Ya Zhou, fichthorn@psu.edu, 18 Mar 17

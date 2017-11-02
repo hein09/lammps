@@ -1,0 +1,103 @@
+"LAMMPS WWW Site"_lws - "LAMMPS Documentation"_ld - "LAMMPS Commands"_lc :c
+
+:link(lws,http://lammps.sandia.gov)
+:link(ld,Manual.html)
+:link(lc,Section_commands.html#comm)
+
+:line
+
+pair_style rdip command :h3
+
+[Syntax:]
+
+pair_style rdip cutoff :pre
+
+cutoff = global cutoff (distance units) :ul
+
+[Examples:]
+
+pair_style rdip 15.0
+pair_coeff * * C.rdip C C EDGE :pre
+
+pair_style hybrid/overlay airebo 3.0 0 1 rdip 15.0
+pair_coeff * * airebo CH.airebo C C C H
+pair_coeff * * rdip   C.rdip C C NULL NULL :pre
+
+[Description:]
+
+The {rdip} pair style computes a Registry Dependent Interlayer Potential (RDIP)
+as described by Kolmogorov and Crespi in "(KC05)"_#KC05.
+
+The potential is of the form:
+
+:c,image(Eqs/pair_rdip.jpg)
+
+The nearest-neighbors searched for the calculation of the normal
+have to be of the same atom type, or one that is mapped as EDGE.
+This pair_style supports surface atoms with three or more neighbors.
+
+:line
+
+One can use only a single pair_coeff command which specifies a RDIP potential
+file and the mapping of LAMMPS to RDIP atom types.
+
+For example, given a graphene flake on a pristine graphene surface:
+
+pair_coeff * * C.rdip C C EDGE :pre
+
+The 1st and 2nd argument must be * * so as to span all LAMMPS atom types.
+The 3rd argument is the name of the potential file that has to include
+all requested RDIP atom types.
+The following N arguments assign one of the RDIP types included in the parameter
+file to the LAMMPS atom types.
+The atoms in each layer have to be of a distinct LAMMPS atom type.
+In this example, the first atom type would be the carbon atoms of the pristine
+graphene, while the second atom type would be the carbon atoms of the adsorbed
+flake.
+Two special atom types are implemented:
+If an atom type is mapped to EDGE, this type will be considered for being
+a nearest neighbor in the definition of the surface normals
+(e.g. the H atoms saturating the flake).
+If an atom type is mapped as NULL, this type won't be evaluated at all.
+This can be used when the {rdip} potential is used as part of the {hybrid} pair style.
+
+The parameters defined in the included C.rdip file are taken from the original
+publication "(KC05)"_#KC05.
+
+:line
+
+[Mixing, shift, table, tail correction, restart, rRESPA info]:
+
+This pair style does not support the "pair_modify"_pair_modify.html
+mix, shift, table, and tail options.
+
+This pair style writes its information to "binary restart files"_restart.html,
+so pair_style and pair_coeff commands do not need to be specified in an input
+script that reads a restart file.
+
+This pair style can only be used via the {pair} keyword of the
+"run_style respa"_run_style.html command. The {inner}, {middle} and
+{outer} keywords are not supported.
+
+[Restrictions:]
+
+This fix is part of the USER-MISC package.  It is only enabled if
+LAMMPS was built with that package.  See the "Making
+LAMMPS"_Section_start.html#start_3 section for more info.
+
+This pair potential requires the "newton"_newton.html setting to be "on" for
+pair interactions.
+
+The C.rdip potential file provided with LAMMPS (see the potentials directory)
+is parameterized for metal "units"_units.html.
+
+[Related commands:]
+
+"pair_coeff"_pair_coeff.html
+
+[Default:] none
+
+:line
+
+:link(KC05)
+[(KC05)] A. N. Kolmogorov, V. H. Crespi, Phys Rev B, 71, 235415 (2005)
