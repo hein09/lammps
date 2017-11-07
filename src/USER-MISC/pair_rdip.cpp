@@ -189,6 +189,9 @@ void PairRDIP::compute(int eflag, int vflag)
         }
         ja = mi;
       }
+      for (int l=0; l<nneigh; ++l) {
+          i_li[l] = new_li[l];
+      }
     }
 
     double r_li[nneigh][3];
