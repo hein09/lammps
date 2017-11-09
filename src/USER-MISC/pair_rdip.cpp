@@ -41,6 +41,7 @@
 using namespace LAMMPS_NS;
 
 #define MAXLINE 1024
+#define MAXNEIGH 6
 
 /* -- Vector helper functions -- */
 
@@ -115,8 +116,8 @@ void PairRDIP::compute(int eflag, int vflag)
      * distances between reference atom i
      * and nearest neighbors l
      */
-    double r_li_len[nneigh]; //squared, only needed for sorting
-    int    i_li[nneigh];
+    double r_li_len[MAXNEIGH]; //squared, only needed for sorting
+    int    i_li[MAXNEIGH];
     for (int l = 0; l < nneigh; ++l) {
       r_li_len[l] = (cut_neigh*cut_neigh) + l;
       i_li[l] = -1;
@@ -130,7 +131,7 @@ void PairRDIP::compute(int eflag, int vflag)
     for (int jj = 0; jj < jnum; ++jj) {
       const int j      = jlist[jj] & NEIGHMASK;
       const int jtype  = type[j];
-      if (tmap[jtype] == -1 || (jtype == itype)) {
+      if ((tmap[jtype] == -1) || (jtype == itype)) {
         double r_li[3] =
           {xi[0] - x[j][0],
            xi[1] - x[j][1],
@@ -167,8 +168,8 @@ void PairRDIP::compute(int eflag, int vflag)
 
     // for nneigh > 3, need to sort the neighbors in pairs
     if (nneigh>3) {
-      bool check[nneigh] = {};
-      int new_li[nneigh] = {};
+      bool check[MAXNEIGH] = {};
+      int new_li[MAXNEIGH] = {};
       int ja=0;
       for (int count=0; count < nneigh; ++count) {
         new_li[count] = i_li[ja];
@@ -178,9 +179,9 @@ void PairRDIP::compute(int eflag, int vflag)
         for (int jb=0; jb<nneigh; ++jb) {
           if (check[jb]) continue;
           double r[3] =
-            {x[ja][0] - x[jb][0],
-             x[ja][1] - x[jb][1],
-             x[ja][2] - x[jb][2]};
+            {x[i_li[ja]][0] - x[i_li[jb]][0],
+             x[i_li[ja]][1] - x[i_li[jb]][1],
+             x[i_li[ja]][2] - x[i_li[jb]][2]};
           double rsq = r[0]*r[0] + r[1]*r[1] + r[2]*r[2];
           if ((md<0) || (rsq<md)) {
             md = rsq;
@@ -194,7 +195,7 @@ void PairRDIP::compute(int eflag, int vflag)
       }
     }
 
-    double r_li[nneigh][3];
+    double r_li[MAXNEIGH][3];
     for (int l=0; l < nneigh; ++l) {
       r_li[l][0] = xi[0] - x[ i_li[l] ][0];
       r_li[l][1] = xi[1] - x[ i_li[l] ][1];
@@ -205,7 +206,7 @@ void PairRDIP::compute(int eflag, int vflag)
      *
      * pairwise normal for nearest neighbors
      */
-    double n_lm[nneigh][3], n_lm_norm[nneigh][3], n_lm_ilen[nneigh];
+    double n_lm[MAXNEIGH][3], n_lm_norm[MAXNEIGH][3], n_lm_ilen[MAXNEIGH];
     for (int l=0; l < nneigh; ++l) {
       int m = (l+1) < nneigh ? l+1 : 0;
       vec_cross(r_li[l], r_li[m], n_lm[l]);
@@ -268,7 +269,7 @@ void PairRDIP::compute(int eflag, int vflag)
              (r_ij[2] - n_i_norm[2] * ni_dot_rij) * n_i_ilen};
 
           // Helper variables in l
-          double rn_ijlm[nneigh][3];
+          double rn_ijlm[MAXNEIGH][3];
           for (int l=0; l < nneigh; ++l) {
             double nlm_dot_rnij = vec_dot(n_lm_norm[l], rn_ij);
             rn_ijlm[l][0] = (rn_ij[0] - n_lm_norm[l][0] * nlm_dot_rnij) * n_lm_ilen[l];
@@ -298,7 +299,7 @@ void PairRDIP::compute(int eflag, int vflag)
            *
            * 1.0* (added only in ij)
            */
-          double force_l[nneigh][3];
+          double force_l[MAXNEIGH][3];
           for (int l=0; l < nneigh; ++l) {
             int m = ((l+1) < nneigh) ? (l+1) : 0;
             int n = (l == 0) ? (nneigh-1) : (l-1);
@@ -499,13 +500,20 @@ void PairRDIP::coeff(int narg, char **arg)
           std::set<std::string> tmpset;
           tmpset.insert(commvec[i]);
           tmpset.insert(commvec[j]);
-          RDIPParam &p = pair_file_map[tmpset];
-          pmap[i][j] = p;
-          pmap[j][i] = p;
+          std::map<std::set<std::string>,RDIPParam>::iterator
+            search = pair_file_map.find(tmpset);
+          if(search != pair_file_map.end()){
+            pmap[i][j] = search->second;
+            pmap[j][i] = search->second;
+          } else {
+            char str[128];
+            sprintf(str, "Parameter set missing for pair %s %s", commvec[i].c_str(), commvec[j].c_str());
+            error->one(FLERR,str);
+          }
         }
       }
     }
-    if (count == 0) error->all(FLERR,"All interaction is turned off");
+    if (count == 0) error->one(FLERR,"All interaction is turned off");
   }
   MPI_Bcast(tmap,ntyp+1,MPI_INT,0,world);
   MPI_Bcast(ntmap,sizeof(RDIPType)*(ntyp+1),MPI_BYTE,0,world);
