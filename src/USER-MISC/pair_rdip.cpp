@@ -110,6 +110,7 @@ void PairRDIP::compute(int eflag, int vflag)
     const int jnum   = numneigh[i];
     const int nneigh = ntmap[itype].nneigh;
     const double cut_neigh = ntmap[itype].cut_neigh;
+    const double delta_isq = 1.0/(ntmap[itype].delta * ntmap[itype].delta);
 
     /* r_li:
      *
@@ -249,7 +250,6 @@ void PairRDIP::compute(int eflag, int vflag)
 
         if (rsq < cut_sq) {
           // Helper variables in j
-          const double delta_isq = 1.0/(param.delta * param.delta);
           const double z0_6 = param.z0*param.z0*param.z0*param.z0*param.z0*param.z0;
           const double r_ij_len   = sqrt(rsq);
           const double exp_V      = exp(-param.lambda * (r_ij_len - param.z0));
@@ -451,8 +451,8 @@ void PairRDIP::coeff(int narg, char **arg)
           RDIPType t;
           char itype[12], jtype[12];
           //try to parse atom type
-          test = sscanf(s,"%s %d %lg", &itype, &t.nneigh, &t.cut_neigh);
-          if (test == 3) {
+          test = sscanf(s,"%s %d %lg %lg", &itype, &t.nneigh, &t.cut_neigh, &t.delta);
+          if (test == 4) {
             type_file_map[itype] = t;
             fileset.insert(itype);
             continue;
@@ -469,10 +469,10 @@ void PairRDIP::coeff(int narg, char **arg)
           tempset.insert(jtype);
           RDIPParam &p = pair_file_map[tempset];
           //read and check parameters
-          test = sscanf(s,"%*s %*s %lg %lg %lg %lg %lg %lg %lg %lg",
+          test = sscanf(s,"%*s %*s %lg %lg %lg %lg %lg %lg %lg",
                         &p.A, &p.C, &p.C0, &p.C2, &p.C4,
-                        &p.delta, &p.z0, &p.lambda);
-          if (test != 8) {
+                        &p.z0, &p.lambda);
+          if (test != 7) {
             char str[128];
             sprintf(str, "Wrong number of coefficients in line \"%s\"", s);
             error->one(FLERR, str);

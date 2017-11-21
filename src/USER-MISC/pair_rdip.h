@@ -44,12 +44,12 @@ class PairRDIP : public Pair {
     int *tmap;       // map lammps to rdip types
     struct RDIPType{
       int nneigh;
-      double cut_neigh;
+      double cut_neigh, delta;
     };
     RDIPType *ntmap; // type information
 
     struct RDIPParam{
-      double A, C, C0, C2, C4, delta, z0, lambda;
+      double A, C, C0, C2, C4, z0, lambda;
     };
     RDIPParam **pmap; // pair interaction information
 
