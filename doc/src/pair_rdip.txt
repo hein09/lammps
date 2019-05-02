@@ -26,7 +26,7 @@ pair_coeff * * rdip   C.rdip C C NULL NULL :pre
 [Description:]
 
 The {rdip} pair style computes a Registry Dependent Interlayer Potential (RDIP)
-as described by Kolmogorov and Crespi in "(KC05)"_#KC05.
+as described by Kolmogorov and Crespi in "(KC05)"_#KC05 and employed in "(Butz14)"_#Butz14.
 
 The potential is of the form:
 
@@ -101,3 +101,6 @@ is parameterized for metal "units"_units.html.
 
 :link(KC05)
 [(KC05)] A. N. Kolmogorov, V. H. Crespi, Phys Rev B, 71, 235415 (2005)
+
+:link(Butz14)
+[(Butz14)] B. Butz, C. Dolle, F. Niekiel, K. Weber, D. Waldmann, H.B. Weber, B. Meyer, E. Spiecker, Nature, 505, 533-537 (2014)
