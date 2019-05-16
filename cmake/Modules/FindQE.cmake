@@ -1,20 +1,23 @@
 # - Find quantum-espresso
 # Find the native QE headers and libraries.
 #
-#  QE_INCLUDE_DIRS - where to find quantum-espresso.h, etc.
+#  QE_INCLUDE_DIRS - where to find libqecouple.h, etc.
 #  QE_LIBRARIES    - List of libraries when using quantum-espresso.
 #  QE_FOUND        - True if quantum-espresso found.
 #
 
-find_path(QE_INCLUDE_DIR libqecouple.h PATH_SUFFIXES COUPLE/include)
+find_path(QE_INCLUDE_DIR libqecouple.h
+    PATH_SUFFIXES COUPLE/include
+    HINTS $ENV{QEROOT}
+    )
 
-find_library(QECOUPLE_LIBRARY NAMES qecouple)
-find_library(PW_LIBRARY NAMES pw)
-find_library(QEMOD_LIBRARY NAMES qemod)
-find_library(QEFFT_LIBRARY NAMES qefft)
-find_library(QELA_LIBRARY NAMES qela)
-find_library(CLIB_LIBRARY NAMES clib)
-find_library(IOTK_LIBRARY NAMES iotk)
+find_library(QECOUPLE_LIBRARY NAMES qecouple HINTS ${QE_INCLUDE_DIR}/../src)
+find_library(PW_LIBRARY NAMES pw HINTS ${QE_INCLUDE_DIR}/../../PW/src)
+find_library(QEMOD_LIBRARY NAMES qemod HINTS ${QE_INCLUDE_DIR}/../../Modules)
+find_library(QEFFT_LIBRARY NAMES qefft HINTS ${QE_INCLUDE_DIR}/../../FFTXlib)
+find_library(QELA_LIBRARY NAMES qela HINTS ${QE_INCLUDE_DIR}/../../LAXlib)
+find_library(CLIB_LIBRARY NAMES clib.a HINTS ${QE_INCLUDE_DIR}/../../clib)
+find_library(IOTK_LIBRARY NAMES iotk HINTS ${QE_INCLUDE_DIR}/../../S3DE/iotk/src)
 
 
 set(QE_LIBRARIES ${QECOUPLE_LIBRARY} ${PW_LIBRARY} ${QEMOD_LIBRARY} ${QEFFT_LIBRARY} ${QELA_LIBRARY} ${CLIB_LIBRARY} ${IOTK_LIBRARY})

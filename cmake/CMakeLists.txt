@@ -182,7 +182,7 @@ set(DEFAULT_PACKAGES ASPHERE BODY CLASS2 COLLOID COMPRESS DIPOLE GRANULAR
   USER-SDPD USER-SMD USER-SMTBQ USER-SPH USER-TALLY USER-UEF USER-VTK
   USER-QUIP USER-QMMM USER-YAFF USER-ADIOS)
 set(ACCEL_PACKAGES USER-OMP KOKKOS OPT USER-INTEL GPU)
-set(OTHER_PACKAGES CORESHELL QEQ)
+set(OTHER_PACKAGES CORESHELL QEQ USER-ONIOM)
 foreach(PKG ${DEFAULT_PACKAGES})
   option(PKG_${PKG} "Build ${PKG} Package" OFF)
 endforeach()
@@ -709,6 +709,10 @@ if(PKG_USER-QMMM)
   find_package(QE REQUIRED)
   include_directories(${QE_INCLUDE_DIRS})
   list(APPEND LAMMPS_LINK_LIBS ${QE_LIBRARIES})
+endif()
+
+if(PKG_USER-ONIOM)
+  find_package(QE)
 endif()
 
 if(PKG_USER-VTK)
@@ -1433,6 +1437,28 @@ if(PKG_GPU)
 
     list(APPEND LIB_SOURCES ${GPU_SOURCES})
     include_directories(${GPU_SOURCES_DIR})
+endif()
+
+################################################
+# packages which selectively include variants
+# based on available external libraries
+################################################
+if(PKG_USER-ONIOM)
+  set(ONIOM_SOURCE_DIR ${LAMMPS_SOURCE_DIR}/USER-ONIOM)
+  file(GLOB ONIOM_HEADERS ${ONIOM_SOURCE_DIR}/*.h)
+  file(GLOB ONIOM_SOURCES ${ONIOM_SOURCE_DIR}/*.cpp)
+  DetectBuildSystemConflict(${LAMMPS_SOURCE_DIR} ${ONIOM_SOURCES} ${ONIOM_HEADERS})
+  if(QE_FOUND)
+    include_directories(${QE_INCLUDE_DIRS})
+    list(APPEND LAMMPS_LINK_LIBS ${QE_LIBRARIES})
+  else()
+    list(REMOVE_ITEM ONIOM_SOURCES
+        ${ONIOM_SOURCE_DIR}/oniom_pw.cpp
+        ${ONIOM_SOURCE_DIR}/oniom_cp.cpp)
+  endif()
+  list(APPEND LMP_SOURCES ${ONIOM_SOURCES})
+  include_directories(${ONIOM_SOURCE_DIR})
+  RegisterStyles(${ONIOM_SOURCE_DIR})
 endif()
 
 ######################################################

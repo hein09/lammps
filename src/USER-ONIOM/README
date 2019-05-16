@@ -1,0 +1,12 @@
+This package implements the "fix oniom" command which can be used
+in a LAMMPS input script.
+
+This fix enables LAMMPS to be used in a QM/MM simulation, currently
+only in combination with pw.x code from the Quantum ESPRESSO package.
+
+This is created by Sebastian Gsänger at FAU (sebastian.gsaenger@fau.de)
+based on the QM/MM implementation by Axel Kohlmeyer (akohlmey at gmail.com).
+
+---------------------------------
+
+Version: 2019-05-13

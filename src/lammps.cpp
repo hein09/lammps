@@ -27,6 +27,7 @@
 #include "style_integrate.h"
 #include "style_kspace.h"
 #include "style_minimize.h"
+#include "style_oniom.h"
 #include "style_pair.h"
 #include "style_region.h"
 #include "universe.h"
@@ -1003,6 +1004,14 @@ void LAMMPS::help()
 #define KSpaceStyle(key,Class) print_style(fp,#key,pos);
 #include "style_kspace.h"
 #undef KSPACE_CLASS
+  fprintf(fp,"\n\n");
+
+  pos = 80;
+  fprintf(fp,"* Oniom styles\n");
+#define ONIOM_CLASS
+#define OniomStyle(key,Class) print_style(fp,#key,pos);
+#include "style_oniom.h"
+#undef ONIOM_CLASS
   fprintf(fp,"\n\n");
 
   pos = 80;

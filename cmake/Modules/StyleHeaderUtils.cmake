@@ -113,6 +113,7 @@ function(RegisterStyles search_path)
     FindStyleHeaders(${search_path} NPAIR_CLASS     npair_     NPAIR     ) # npair     ) # neighbor
     FindStyleHeaders(${search_path} NSTENCIL_CLASS  nstencil_  NSTENCIL  ) # nstencil  ) # neighbor
     FindStyleHeaders(${search_path} NTOPO_CLASS     ntopo_     NTOPO     ) # ntopo     ) # neighbor
+    FindStyleHeaders(${search_path} ONIOM_CLASS     oniom_     ONIOM     ) # oniom     ) # integrate
     FindStyleHeaders(${search_path} PAIR_CLASS      pair_      PAIR      ) # pair      ) # force
     FindStyleHeaders(${search_path} READER_CLASS    reader_    READER    ) # reader    ) # read_dump
     FindStyleHeaders(${search_path} REGION_CLASS    region_    REGION    ) # region    ) # domain
@@ -136,6 +137,7 @@ function(RegisterStylesExt search_path extension sources)
     FindStyleHeadersExt(${search_path} NPAIR_CLASS     ${extension}  NPAIR     ${sources})
     FindStyleHeadersExt(${search_path} NSTENCIL_CLASS  ${extension}  NSTENCIL  ${sources})
     FindStyleHeadersExt(${search_path} NTOPO_CLASS     ${extension}  NTOPO     ${sources})
+    FindStyleHeadersExt(${search_path} ONIOM_CLASS     ${extension}  ONIOM     ${sources})
     FindStyleHeadersExt(${search_path} PAIR_CLASS      ${extension}  PAIR      ${sources})
     FindStyleHeadersExt(${search_path} READER_CLASS    ${extension}  READER    ${sources})
     FindStyleHeadersExt(${search_path} REGION_CLASS    ${extension}  REGION    ${sources})
@@ -159,6 +161,7 @@ function(GenerateStyleHeaders output_path)
     GenerateStyleHeader(${output_path} NPAIR      npair     ) # neighbor
     GenerateStyleHeader(${output_path} NSTENCIL   nstencil  ) # neighbor
     GenerateStyleHeader(${output_path} NTOPO      ntopo     ) # neighbor
+    GenerateStyleHeader(${output_path} ONIOM      oniom     ) # integrate
     GenerateStyleHeader(${output_path} PAIR       pair      ) # force
     GenerateStyleHeader(${output_path} READER     reader    ) # read_dump
     GenerateStyleHeader(${output_path} REGION     region    ) # domain
