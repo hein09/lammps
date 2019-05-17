@@ -20,6 +20,7 @@ IntegrateStyle(verlet/oniom,VerletOniom)
 #ifndef LMP_VERLET_ONIOM_H
 #define LMP_VERLET_ONIOM_H
 
+#include <vector>
 #include "oniom.h"
 #include "verlet.h"
 
@@ -29,7 +30,7 @@ class VerletOniom : public Verlet {
     friend class OniomConnect;
 public:
     VerletOniom(LAMMPS *, int, char **);
-    ~VerletOniom();
+    ~VerletOniom() override;
     void init() override;
     void setup(int) override;
     void setup_minimal(int) override;
@@ -43,12 +44,8 @@ public:
 
 protected:
     Oniom* oniom{nullptr};
-    bool master{true};
     int outer{-1};
-    int inner_a{-1};
-    int inner_b{-1};
-
-    void verify_connections();
+    std::vector<std::pair<int,int>> inner{};
 
 private:
     template <typename T> static Oniom *oniom_creator(LAMMPS *, int, char**);

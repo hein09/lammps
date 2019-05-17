@@ -67,7 +67,6 @@ VerletOniom::~VerletOniom()
 
 void VerletOniom::init()
 {
-    verify_connections();
     if(oniom){
         oniom->init();
     }else{
@@ -81,7 +80,6 @@ void VerletOniom::init()
 
 void VerletOniom::setup(int flag)
 {
-    verify_connections();
     if(oniom){
         oniom->setup(flag);
     }else{
@@ -97,7 +95,6 @@ void VerletOniom::setup(int flag)
 
 void VerletOniom::setup_minimal(int flag)
 {
-    verify_connections();
     if(oniom){
         oniom->setup_minimal(flag);
     }else{
@@ -144,39 +141,5 @@ bigint VerletOniom::memory_usage()
         return oniom->memory_usage();
     }else{
         return Verlet::memory_usage();
-    }
-}
-
-/* ----------------------------------------------------------------------
-    Make sure partitions are connected correctly
-   ---------------------------------------------------------------------- */
-
-void VerletOniom::verify_connections()
-{
-    uint8_t tmp;
-    MPI_Status status;
-    // wait for inner area
-    if(inner_a != -1){
-        MPI_Recv(&tmp, 1, MPI_BYTE,
-                 universe->root_proc[inner_a],
-                 universe->iworld,
-                 universe->uworld,
-                 &status);
-    }
-    if(inner_b != -1){
-        MPI_Recv(&tmp, 1, MPI_BYTE,
-                 universe->root_proc[inner_b],
-                 universe->iworld,
-                 universe->uworld,
-                 &status);
-    }
-    // check if master, else notify outer area
-    if(outer == -1){
-        master = true;
-    }else{
-        MPI_Send(&tmp, 1, MPI_BYTE,
-                 universe->root_proc[outer],
-                 outer,
-                 universe->uworld);
     }
 }
