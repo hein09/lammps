@@ -28,7 +28,7 @@ class OniomCP: public Oniom{
 public:
     OniomCP(LAMMPS *l, int, char**);
     ~OniomCP() override;
-    uint8_t get_capabilities() override;
+    int get_capabilities() override;
 };
 
 }

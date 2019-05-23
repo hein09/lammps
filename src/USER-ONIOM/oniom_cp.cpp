@@ -26,7 +26,7 @@ OniomCP::OniomCP(LAMMPS *l, int narg, char **arg)
 OniomCP::~OniomCP()
 {}
 
-uint8_t OniomCP::get_capabilities()
+int OniomCP::get_capabilities()
 {
-    return MD;
+    return MD|Slave;
 }

@@ -26,7 +26,7 @@ OniomPW::OniomPW(LAMMPS *l, int narg, char **args)
 OniomPW::~OniomPW()
 {}
 
-uint8_t OniomPW::get_capabilities()
+int OniomPW::get_capabilities()
 {
-    return MD;
+    return MD|Slave;
 }

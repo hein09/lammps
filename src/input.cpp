@@ -821,6 +821,7 @@ int Input::execute_command()
   else if (!strcmp(command,"neigh_modify")) neigh_modify();
   else if (!strcmp(command,"neighbor")) neighbor_command();
   else if (!strcmp(command,"newton")) newton();
+  else if (!strcmp(command,"oniom_style")) oniom_style();
   else if (!strcmp(command,"package")) package();
   else if (!strcmp(command,"pair_coeff")) pair_coeff();
   else if (!strcmp(command,"pair_modify")) pair_modify();
@@ -1718,6 +1719,14 @@ void Input::newton()
 
   if (newton_pair || newton_bond) force->newton = 1;
   else force->newton = 0;
+}
+
+/* ---------------------------------------------------------------------- */
+
+void Input::oniom_style()
+{
+  if (narg < 1) error->all(FLERR, "Illegal oniom_style command");
+  update->create_oniom(narg, arg);
 }
 
 /* ---------------------------------------------------------------------- */

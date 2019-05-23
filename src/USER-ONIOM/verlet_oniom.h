@@ -20,14 +20,12 @@ IntegrateStyle(verlet/oniom,VerletOniom)
 #ifndef LMP_VERLET_ONIOM_H
 #define LMP_VERLET_ONIOM_H
 
-#include <vector>
 #include "oniom.h"
 #include "verlet.h"
 
 namespace LAMMPS_NS {
 
 class VerletOniom : public Verlet {
-    friend class OniomConnect;
 public:
     VerletOniom(LAMMPS *, int, char **);
     ~VerletOniom() override;
@@ -38,17 +36,6 @@ public:
     void cleanup() override;
     void reset_dt() override;
     bigint memory_usage() override;
-
-    using OniomCreator = Oniom* (*)(LAMMPS *, int, char**);
-    using OniomCreatorMap = std::map<std::string,OniomCreator>;
-
-protected:
-    Oniom* oniom{nullptr};
-    int outer{-1};
-    std::vector<std::pair<int,int>> inner{};
-
-private:
-    template <typename T> static Oniom *oniom_creator(LAMMPS *, int, char**);
 };
 
 }

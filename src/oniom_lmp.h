@@ -1,4 +1,4 @@
-/* -*- c++ -*- -------------------------------------------------------------
+/* ----------------------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    http://lammps.sandia.gov, Sandia National Laboratories
    Steve Plimpton, sjplimp@sandia.gov
@@ -11,29 +11,27 @@
    See the README file in the top-level LAMMPS directory.
 ------------------------------------------------------------------------- */
 
-#ifndef LMP_ONIOM_H
-#define LMP_ONIOM_H
+#ifdef ONIOM_CLASS
 
-#include "pointers.h"
+OniomStyle(lammps,OniomLMP)
+
+#else
+
+#ifndef LMP_ONIOM_LMP_H
+#define LMP_ONIOM_LMP_H
+
+#include "oniom.h"
 
 namespace LAMMPS_NS {
 
-class Oniom : public Pointers {
+class OniomLMP: public Oniom{
 public:
-    Oniom(LAMMPS *l, int, char**);
-    ~Oniom();
-    virtual void init(){}
-    virtual void setup(int){}
-    virtual void setup_minimal(int){}
-    virtual void run(int){}
-    virtual void cleanup(){}
-    virtual void reset_dt();
-    virtual bigint memory_usage();
-
-    enum Capabilities:uint8_t {MD=0x1, Min=0x2};
-    virtual uint8_t get_capabilities();
+    OniomLMP(LAMMPS *l, int, char**);
+    ~OniomLMP() override;
+    int get_capabilities() override;
 };
 
 }
 
-#endif // LMP_ONIOM_H
+#endif // LMP_ONIOM_LMP_H
+#endif

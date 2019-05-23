@@ -122,6 +122,7 @@ class Input : protected Pointers {
   void neigh_modify();
   void neighbor_command();
   void newton();
+  void oniom_style();
   void package();
   void pair_coeff();
   void pair_modify();

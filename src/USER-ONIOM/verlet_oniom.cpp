@@ -16,10 +16,9 @@
 ------------------------------------------------------------------------- */
 
 #include <mpi.h>
-#include "verlet_oniom.h"
 #include "style_oniom.h"
-#include "error.h"
-#include "universe.h"
+#include "verlet_oniom.h"
+#include "update.h"
 
 using namespace LAMMPS_NS;
 
@@ -28,37 +27,10 @@ using namespace LAMMPS_NS;
 VerletOniom::VerletOniom(LAMMPS *l, int narg, char **arg) :
     Verlet(l, narg, arg)
 {
-    if (narg < 1) error->all(FLERR, "Illegal run_style verlet/oniom command");
-
-    OniomCreatorMap oniom_map{};
-#define ONIOM_CLASS
-#define OniomStyle(key,Class) \
-    oniom_map[#key] = &oniom_creator<Class>;
-#include "style_oniom.h"
-#undef OniomStyle
-#undef ONIOM_CLASS
-
-    // "lammps" falls back to default verlet-integrator
-    if(strcmp(arg[0], "lammps") == 0){
-        return;
-    }
-
-    auto pos = oniom_map.find(arg[0]);
-    if(pos != oniom_map.end()){
-        oniom = pos->second(lmp, narg-1, &arg[1]);
-    }else{
-        error->all(FLERR, "Illegal run_style verlet/oniom command");
-    }
-}
-template <typename T>
-Oniom* VerletOniom::oniom_creator(LAMMPS *l, int narg, char**arg)
-{
-    return new T(l, narg, arg);
 }
 
 VerletOniom::~VerletOniom()
 {
-    if(oniom) delete oniom;
 }
 
 /* ----------------------------------------------------------------------
@@ -67,8 +39,8 @@ VerletOniom::~VerletOniom()
 
 void VerletOniom::init()
 {
-    if(oniom){
-        oniom->init();
+    if(strcmp(update->oniom_style, "lammps")){
+        update->oniom->init();
     }else{
         Verlet::init();
     }
@@ -80,8 +52,8 @@ void VerletOniom::init()
 
 void VerletOniom::setup(int flag)
 {
-    if(oniom){
-        oniom->setup(flag);
+    if(strcmp(update->oniom_style, "lammps")){
+        update->oniom->setup(flag);
     }else{
         Verlet::setup(flag);
     }
@@ -95,8 +67,8 @@ void VerletOniom::setup(int flag)
 
 void VerletOniom::setup_minimal(int flag)
 {
-    if(oniom){
-        oniom->setup_minimal(flag);
+    if(strcmp(update->oniom_style, "lammps")){
+        update->oniom->setup_minimal(flag);
     }else{
         Verlet::setup_minimal(flag);
     }
@@ -108,8 +80,8 @@ void VerletOniom::setup_minimal(int flag)
 
 void VerletOniom::run(int n)
 {
-    if(oniom){
-        oniom->run(n);
+    if(strcmp(update->oniom_style, "lammps")){
+        update->oniom->run(n);
     }else{
         Verlet::run(n);
     }
@@ -119,8 +91,8 @@ void VerletOniom::run(int n)
 
 void VerletOniom::cleanup()
 {
-    if(oniom){
-        oniom->cleanup();
+    if(strcmp(update->oniom_style, "lammps")){
+        update->oniom->cleanup();
     }else{
         Verlet::cleanup();
     }
@@ -128,8 +100,8 @@ void VerletOniom::cleanup()
 
 void VerletOniom::reset_dt()
 {
-    if(oniom){
-        oniom->reset_dt();
+    if(strcmp(update->oniom_style, "lammps")){
+        update->oniom->reset_dt();
     }else{
         Verlet::reset_dt();
     }
@@ -137,8 +109,8 @@ void VerletOniom::reset_dt()
 
 bigint VerletOniom::memory_usage()
 {
-    if(oniom){
-        return oniom->memory_usage();
+    if(strcmp(update->oniom_style, "lammps")){
+        update->oniom->memory_usage();
     }else{
         return Verlet::memory_usage();
     }

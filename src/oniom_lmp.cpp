@@ -15,26 +15,18 @@
    Contributing author:  Sebastian Gsänger (FAU)
 ------------------------------------------------------------------------- */
 
-#include "oniom.h"
+#include "oniom_lmp.h"
 
 using namespace LAMMPS_NS;
 
-Oniom::Oniom(LAMMPS *l, int, char**)
-    : Pointers{l}
+OniomLMP::OniomLMP(LAMMPS *l, int narg, char **arg)
+    : Oniom{l, narg, arg}
 {}
 
-Oniom::~Oniom()
+OniomLMP::~OniomLMP()
 {}
 
-void Oniom::reset_dt()
-{}
-
-bigint Oniom::memory_usage()
+int OniomLMP::get_capabilities()
 {
-    return 0;
-}
-
-uint8_t Oniom::get_capabilities()
-{
-    return 0;
+    return MD|Min|Master|Slave|VariableCell|NonPeriodic;
 }

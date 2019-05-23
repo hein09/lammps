@@ -49,14 +49,20 @@ class Update : protected Pointers {
   class Min *minimize;
   char *minimize_style;
 
+  class Oniom *oniom;
+  char *oniom_style;
+
   typedef Integrate *(*IntegrateCreator)(LAMMPS *,int,char**);
   typedef Min *(*MinimizeCreator)(LAMMPS *);
+  typedef Oniom *(*OniomCreator)(LAMMPS *,int,char**);
 
   typedef std::map<std::string,IntegrateCreator> IntegrateCreatorMap;
   typedef std::map<std::string,MinimizeCreator> MinimizeCreatorMap;
+  typedef std::map<std::string,OniomCreator> OniomCreatorMap;
 
   IntegrateCreatorMap *integrate_map;
   MinimizeCreatorMap *minimize_map;
+  OniomCreatorMap *oniom_map;
 
   Update(class LAMMPS *);
   ~Update();
@@ -64,6 +70,7 @@ class Update : protected Pointers {
   void set_units(const char *);
   void create_integrate(int, char **, int);
   void create_minimize(int, char **);
+  void create_oniom(int, char **);
   void reset_timestep(int, char **);
   void reset_timestep(bigint);
   void update_time();
@@ -74,6 +81,7 @@ class Update : protected Pointers {
 
   template <typename T> static Integrate *integrate_creator(LAMMPS *, int, char **);
   template <typename T> static Min *minimize_creator(LAMMPS *);
+  template <typename T> static Oniom *oniom_creator(LAMMPS *, int, char**);
 };
 
 }

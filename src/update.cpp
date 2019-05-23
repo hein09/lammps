@@ -18,6 +18,7 @@
 #include "min.h"
 #include "style_integrate.h"
 #include "style_minimize.h"
+#include "style_oniom.h"
 #include "neighbor.h"
 #include "neigh_list.h"
 #include "force.h"
@@ -60,6 +61,8 @@ Update::Update(LAMMPS *lmp) : Pointers(lmp)
   integrate = NULL;
   minimize_style = NULL;
   minimize = NULL;
+  oniom_style = NULL;
+  oniom = NULL;
 
   integrate_map = new IntegrateCreatorMap();
 
@@ -79,11 +82,23 @@ Update::Update(LAMMPS *lmp) : Pointers(lmp)
 #undef MinimizeStyle
 #undef MINIMIZE_CLASS
 
+  oniom_map = new OniomCreatorMap();
+
+#define ONIOM_CLASS
+#define OniomStyle(key,Class) \
+  (*oniom_map)[#key] = &oniom_creator<Class>;
+#include "style_oniom.h"
+#undef OniomStyle
+#undef ONIOM_CLASS
+
   str = (char *) "verlet";
   create_integrate(1,&str,1);
 
   str = (char *) "cg";
   create_minimize(1,&str);
+
+  str = (char *) "lammps";
+  create_oniom(1,&str);
 }
 
 /* ---------------------------------------------------------------------- */
@@ -98,8 +113,12 @@ Update::~Update()
   delete [] minimize_style;
   delete minimize;
 
+  delete [] oniom_style;
+  delete oniom;
+
   delete integrate_map;
   delete minimize_map;
+  delete oniom_map;
 }
 
 /* ---------------------------------------------------------------------- */
@@ -407,6 +426,36 @@ template <typename T>
 Min *Update::minimize_creator(LAMMPS *lmp)
 {
   return new T(lmp);
+}
+
+/* ---------------------------------------------------------------------- */
+
+void Update::create_oniom(int narg, char **arg)
+{
+  if (narg != 1) error->all(FLERR,"Illegal oniom_style command");
+
+  delete [] oniom_style;
+  delete oniom;
+
+  if (oniom_map->find(arg[0]) != oniom_map->end()) {
+    OniomCreator oniom_creator = (*oniom_map)[arg[0]];
+    oniom = oniom_creator(lmp, narg-1, &arg[1]);
+  }
+  else error->all(FLERR,"Illegal oniom_style command");
+
+  int n = strlen(arg[0]) + 1;
+  oniom_style = new char[n];
+  strcpy(oniom_style,arg[0]);
+}
+
+/* ----------------------------------------------------------------------
+   one instance per oniom style in style_oniom.h
+------------------------------------------------------------------------- */
+
+template <typename T>
+Oniom *Update::oniom_creator(LAMMPS *lmp, int narg, char **arg)
+{
+  return new T(lmp, narg, arg);
 }
 
 /* ----------------------------------------------------------------------

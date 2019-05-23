@@ -28,7 +28,7 @@ class OniomPW: public Oniom{
 public:
     OniomPW(LAMMPS *l, int narg, char **args);
     ~OniomPW() override;
-    uint8_t get_capabilities() override;
+    int get_capabilities() override;
 };
 
 }
