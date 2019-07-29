@@ -44,12 +44,6 @@ FixONIOM::FixONIOM(LAMMPS *lmp, int narg, char **arg) :
   if (narg != 3)
     error->all(FLERR,"Illegal fix oniom command");
 
-  if (strcmp(update->unit_style,"metal") == 0) {
-    fscale = 1.0/23.0609;
-  } else if (strcmp(update->unit_style,"real") == 0) {
-    fscale = 1.0;
-  } else error->all(FLERR,"Oniom requires real or metal units");
-
   if (atom->tag_enable == 0)
     error->all(FLERR,"Oniom requires atom IDs");
 
@@ -103,7 +97,7 @@ void FixONIOM::init()
   MPI_Request req;
 
   /* - make sure number of atoms match-up
-   * - and creating mapping between partition-local tags and
+   * - create mapping between partition-local tags and
    *   oniom-specific atom-number
    * - initial matching of positions
    */
@@ -259,7 +253,7 @@ void FixONIOM::send_positions()
         comm_buf.push_back({
           con.hash.at(tag[i]),
           x[i][0], x[i][1], x[i][2],
-          q[i]
+//          q[i]
         });
       }
     }
@@ -308,7 +302,7 @@ void FixONIOM::receive_positions()
   comm_buf.clear();
   comm_buf.resize(con.mc_nat);
   int recv_count = con.mc_nat * sizeof(decltype (comm_buf)::value_type);
-//  MPI_Bcast(comm_buf.data(), recv_count, MPI_BYTE, 0, con.comm);
+  MPI_Bcast(comm_buf.data(), recv_count, MPI_BYTE, 0, con.comm);
 
   // update positions of relevant atoms
   for(int i=0; i<nlocal; ++i){
@@ -351,14 +345,27 @@ void FixONIOM::receive_forces()
     MPI_Bcast(comm_buf.data(), recv_count, MPI_BYTE, 0, con.comm);
 
     // update forces
-    double factor = (con.mode & MINUS) ? -fscale : fscale;
-    for(int i=0; i<nlocal; ++i){
-      if(mask[i] & bitmask){
-        for(int j=0; j<con.mc_nat; ++j){
-          if(con.tags[comm_buf[j].tag] == tag[i]){
-            f[i][0] += factor * comm_buf[j].x;
-            f[i][1] += factor * comm_buf[j].y;
-            f[i][2] += factor * comm_buf[j].z;
+    if(con.mode & MINUS){
+      for(int i=0; i<nlocal; ++i){
+        if(mask[i] & bitmask){
+          for(int j=0; j<con.mc_nat; ++j){
+            if(con.tags[comm_buf[j].tag] == tag[i]){
+              f[i][0] -= comm_buf[j].x;
+              f[i][1] -= comm_buf[j].y;
+              f[i][2] -= comm_buf[j].z;
+            }
+          }
+        }
+      }
+    }else{
+      for(int i=0; i<nlocal; ++i){
+        if(mask[i] & bitmask){
+          for(int j=0; j<con.mc_nat; ++j){
+            if(con.tags[comm_buf[j].tag] == tag[i]){
+              f[i][0] += comm_buf[j].x;
+              f[i][1] += comm_buf[j].y;
+              f[i][2] += comm_buf[j].z;
+            }
           }
         }
       }

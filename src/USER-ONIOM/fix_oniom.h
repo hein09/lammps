@@ -72,7 +72,6 @@ class FixONIOM : public Fix {
       double q;
   };
 
-  double fscale;                    // scale factor for forces
   std::vector<commdata_t> comm_buf; // persistent storage for per-atom data
   int *recv_count_buf;
   int *displs_buf;
