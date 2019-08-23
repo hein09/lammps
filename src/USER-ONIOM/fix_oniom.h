@@ -51,14 +51,11 @@ class FixONIOM : public Fix {
  public:
   bool   master{false};         // identifies first == master partition
   int    verbose{0};            // print level (<= 0 means no output)
-  enum {PLUS=0x0, MINUS=0x1,
-        MC=0x0, EC=0x2};
+  enum {PLUS=0x0, MINUS=0x1};
   struct conn_t{
     int mode{-1};
     int mc_group{-1};
     int mc_nat{-1};
-    int ec_group{-1};
-    int ec_nat{-1};
     MPI_Comm comm{MPI_COMM_NULL};
     std::vector<tagint> tags{};
     std::map<tagint,int> hash{};

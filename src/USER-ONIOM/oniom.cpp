@@ -35,12 +35,12 @@ using namespace LAMMPS_NS;
  * usage:
  *
  * use one of:
- * > oniom run <runargs> <slave definition>
- * > oniom minimize <runargs> <slave definition>
+ * > oniom run <runargs> <keyword args ...>
+ * > oniom minimize <runargs> <keyword args ...>
  *
- * with <slave definition being one or multiple of:
- * > mc <pair of partitions> <mc_group>
- * > ec <pair of partitions> <mc_group> <ec_group>
+ * keyword args can be one or multiple of:
+ * group <group-ID> <pair of partitons>
+ * verbose 0/1/2
  ****************************************/
 void Oniom::command(int narg, char **arg)
 {
@@ -61,8 +61,7 @@ void Oniom::run(int narg, char **arg)
   int nrunarg = -1;
   char **runarg = arg;
   for(int i=0; i<narg; ++i){
-    if((strcmp(arg[i], "mc")==0) ||
-       (strcmp(arg[i], "ec")==0) ||
+    if((strcmp(arg[i], "group")==0) ||
        (strcmp(arg[i], "verbose")==0)){
       nrunarg = i;
       break;
@@ -110,34 +109,16 @@ FixONIOM* Oniom::mkFix(int narg, char **arg)
   while(iarg < narg){
 
     /********************************************************
-     * Mechanical or electrostatic coupling
-     *
-     * Needs two slave partitions and a static group of atoms
-     * Additional group needed for electrostatic coupling,
-     * should not overlap with first, but may be dynamic
+     * Needs a static group of atoms and two slave partitions
      ********************************************************/
-    if((strcmp(arg[iarg], "mc") == 0) || (strcmp(arg[iarg], "ec") == 0)){
-      bool ecflag = strcmp(arg[iarg], "ec")==0;
-      int arg_count = ecflag ? 4 : 3;
-      if(iarg+arg_count > narg)
+    if(strcmp(arg[iarg], "group") == 0){
+      if(iarg+3 > narg)
         error->universe_all(FLERR, "Illegal oniom command");
 
-      // arg[iarg+1] is low-level slave partition
-      int low = force->inumeric(FLERR, arg[iarg+1])-1;
-      if((low < 1 ) || (low>=universe->nworlds)){
-        error->universe_all(FLERR, "Invalid partition in oniom command");
-      }
-
-      // arg[iarg+2] is high-level slave partition
-      int high = force->inumeric(FLERR, arg[iarg+2])-1;
-      if((high < 1 ) || (high>=universe->nworlds)){
-        error->universe_all(FLERR, "Invalid partition in oniom command");
-      }
-
-      // arg[iarg+3] is mc-group
-      int mc_group = group->find(arg[iarg+3]);
+      // arg[iarg+1] is group
+      int mc_group = group->find(arg[iarg+1]);
       if(mc_group == -1)
-        error->all(FLERR,"Could not find oniom mc group ID");
+        error->all(FLERR,"Could not find oniom group ID");
       if(group->dynamic[mc_group])
         error->all(FLERR,"MC group must be static");
       bigint temp_mc = group->count(mc_group);
@@ -146,28 +127,21 @@ FixONIOM* Oniom::mkFix(int narg, char **arg)
       }
       int mc_nat = static_cast<int>(temp_mc);
 
-      // arg[iarg+4] is ec-group (does not need to exist on slaves)
-      // TODO: check for overlap with mc_group
-      int ec_group = -1;
-      int ec_nat = -1;
-      if(ecflag){
-        ec_group = group->find(arg[iarg+4]);
-        if(!iworld && (ec_group == -1)){
-          error->all(FLERR,"Could not find oniom ec group ID");
-        }else if(ec_group != -1){
-          if(ec_group == mc_group)
-            error->all(FLERR, "Electrostatic and mechanical groups overlap");
-          // TODO: may remove this in the future
-          bigint temp_ec = group->count(ec_group);
-          if(temp_ec > MAXSMALLINT){
-              error->all(FLERR,"Too many EC atoms for ONIOM calculation");
-          }
-          ec_nat = static_cast<int>(temp_mc);
-        }
+      // arg[iarg+2] is low-level slave partition
+      int low = force->inumeric(FLERR, arg[iarg+2])-1;
+      if((low < 1 ) || (low>=universe->nworlds)){
+        error->universe_all(FLERR, "Invalid partition in oniom command");
+      }
+
+      // arg[iarg+2] is high-level slave partition
+      int high = force->inumeric(FLERR, arg[iarg+3])-1;
+      if((high < 1 ) || (high>=universe->nworlds)){
+        error->universe_all(FLERR, "Invalid partition in oniom command");
       }
 
       // push information to fix and create intercommunicators
       if(!iworld){
+        // master partition
         auto setupMPI = [&](int part, MPI_Comm& comm){
           int me, flag{0};
           MPI_Request req;
@@ -188,17 +162,18 @@ FixONIOM* Oniom::mkFix(int narg, char **arg)
           MPI_Intercomm_create(world, 0, universe->uworld,
                                universe->root_proc[part], part, &comm);
         };
-        int lowmode = FixONIOM::MINUS | (ecflag ? FixONIOM::EC : FixONIOM::MC);
-        int highmode = FixONIOM::PLUS | (ecflag ? FixONIOM::EC : FixONIOM::MC);
-        fix->connections.push_back({lowmode, mc_group, mc_nat, ec_group, ec_nat});
+        int lowmode = FixONIOM::MINUS;
+        int highmode = FixONIOM::PLUS;
+        fix->connections.push_back({lowmode, mc_group, mc_nat});
         setupMPI(low, fix->connections.back().comm);
-        fix->connections.push_back({highmode, mc_group, mc_nat, ec_group, ec_nat});
+        fix->connections.push_back({highmode, mc_group, mc_nat});
         setupMPI(high, fix->connections.back().comm);
       }else if((iworld == (low)) || (iworld == (high))){
+        // slave partitions
         if(!fix->connections.empty()){
           error->universe_one(FLERR, "Same partition used in multiple oniom regions");
         }
-        fix->connections.push_back({0, mc_group, mc_nat, ec_group, ec_nat});
+        fix->connections.push_back({0, mc_group, mc_nat});
         int me, flag{0}, tag;
         MPI_Request req;
         MPI_Comm_rank(world, &me);
@@ -219,7 +194,7 @@ FixONIOM* Oniom::mkFix(int narg, char **arg)
                              universe->root_proc[0], iworld,
                              &fix->connections.back().comm);
       }
-      iarg += arg_count+1;
+      iarg += 4;
 
     /********************
      * Verbosity

@@ -32,7 +32,7 @@ using namespace FixConst;
 
 /***************************************************************
  * create class and parse arguments in LAMMPS script. Syntax:
- * fix ID group-ID oniom (master[_ec] <low> <high> | slave[_ec] <master>) mc_group [ec_group]
+ * fix ID group-ID oniom (master <low> <high> | slave <master>) mc_group
  *
  * sets up connections between partitions
  ***************************************************************/
@@ -106,9 +106,8 @@ void FixONIOM::init()
     // broadcast nat to master for checking of consistency
     auto& con = connections.front();
     const int bitmask = group->bitmask[con.mc_group];
-    int nat[2] = {con.mc_nat, con.ec_nat};
     auto root = (comm->me == 0) ? MPI_ROOT : MPI_PROC_NULL;
-    MPI_Bcast(nat, 2, MPI_INT, root, con.comm);
+    MPI_Bcast(&con.mc_nat, 1, MPI_INT, root, con.comm);
 
     // collect process-local tags
     decltype (con.tags) tags{};
@@ -130,14 +129,14 @@ void FixONIOM::init()
 
     // gather and sort tags
     con.tags.clear();
-    con.tags.resize(nat[0]);
+    con.tags.resize(con.mc_nat);
     MPI_Allgatherv(tags.data(), send_count, MPI_BYTE,
                    con.tags.data(), recv_count_buf, displs_buf, MPI_BYTE, world);
     std::sort(con.tags.begin(), con.tags.end());
 
     // create hashtable
     con.hash.clear();
-    for(int i=0; i<nat[0]; ++i){
+    for(int i=0; i<con.mc_nat; ++i){
       con.hash[con.tags[i]] = i;
     }
 
@@ -147,7 +146,7 @@ void FixONIOM::init()
           "  hash[" TAGINT_FORMAT "]=" TAGINT_FORMAT "\n";
       if (screen) fputs("slave tags\n", screen);
       if (logfile) fputs("slave tags\n", logfile);
-      for(int i=0; i<nat[0]; ++i){
+      for(int i=0; i<con.mc_nat; ++i){
         if (screen) fprintf(screen, fmt, i, con.tags[i],
                             con.tags[i], con.hash[con.tags[i]]);
         if (logfile) fprintf(logfile, fmt, i, con.tags[i],
@@ -162,16 +161,11 @@ void FixONIOM::init()
     for(auto& con: connections){
       const int bitmask = group->bitmask[con.mc_group];
       // receive nat from slaves
-      int nat[2];
-      MPI_Bcast(nat, 2, MPI_INT, 0, con.comm);
+      int nat;
+      MPI_Bcast(&nat, 1, MPI_INT, 0, con.comm);
 
-      if(con.mc_nat != nat[0])
+      if(con.mc_nat != nat)
         error->all(FLERR, "Inconsistent number of MC atoms");
-
-      if(con.mode & EC){
-        if((nat[1] != -1) && (con.ec_nat != con.ec_nat))
-          error->all(FLERR, "Inconsistent number of EC atoms");
-      }
 
       // collect process-local tags
       decltype(con.tags) tags{};
@@ -227,7 +221,6 @@ void FixONIOM::init()
 
 void FixONIOM::send_positions()
 {
-  //TODO: EC atoms
   if(!master) return;
   const int nlocal = atom->nlocal;
   const int * const mask = atom->mask;
@@ -280,7 +273,6 @@ void FixONIOM::send_positions()
 
 void FixONIOM::receive_positions()
 {
-  //TODO: EC atoms
   if(master) return;
 
   const auto& con = connections.front();
@@ -323,7 +315,6 @@ void FixONIOM::receive_positions()
 
 void FixONIOM::receive_forces()
 {
-  //TODO: EC atoms
   if(!master) return;
   const int nlocal = atom->nlocal;
   const int * const mask = atom->mask;
@@ -375,7 +366,6 @@ void FixONIOM::receive_forces()
 
 void FixONIOM::send_forces()
 {
-  //TODO: EC atoms
   if(master) return;
 
   const int nlocal = atom->nlocal;
