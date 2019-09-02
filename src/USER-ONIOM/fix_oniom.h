@@ -33,12 +33,14 @@ class FixONIOM : public Fix {
   int setmask() override;
   void init() override;
 
-  // send up-to-date position information to QM and MM slave code
   void post_integrate() override;
-
-  // receive and update forces
   void setup(int) override;
+  void min_setup(int) override;
   void post_force(int) override;
+  void min_pre_force(int) override;
+  void min_post_force(int) override;
+  void end_of_step() override;
+  void post_run() override;
 
   double memory_usage() override;
 
@@ -50,6 +52,8 @@ class FixONIOM : public Fix {
 
  public:
   bool   master{false};         // identifies first == master partition
+  bool   minimize{false};       // distinguish between MD and Minimization
+  bool   run_once{false};       // make sure that Min and MD match communication
   int    verbose{0};            // print level (<= 0 means no output)
   enum {PLUS=0x0, MINUS=0x1};
   struct conn_t{
