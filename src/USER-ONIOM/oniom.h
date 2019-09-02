@@ -58,10 +58,6 @@ E: Could not find oniom ... group ID
 
 The specified group name does not exist in this partition
 
-E: Electrostatic and mechanical groups overlap
-
-Ensure that the specified MC and EC groups are separate and non-overlapping
-
 E: Too many ... atoms for ONIOM calculation
 
 Self-explanatory.

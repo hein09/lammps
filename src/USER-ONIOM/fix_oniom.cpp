@@ -16,6 +16,7 @@
 ------------------------------------------------------------------------- */
 
 #include <algorithm>
+#include <unistd.h>
 
 #include "fix_oniom.h"
 
@@ -23,25 +24,21 @@
 #include "comm.h"
 #include "update.h"
 #include "error.h"
+#include "force.h"
 #include "group.h"
 #include "universe.h"
 #include "modify.h"
+#include "timer.h"
 
 using namespace LAMMPS_NS;
 using namespace FixConst;
 
-/***************************************************************
- * create class and parse arguments in LAMMPS script. Syntax:
- * fix ID group-ID oniom (master <low> <high> | slave <master>) mc_group
- *
- * sets up connections between partitions
- ***************************************************************/
 FixONIOM::FixONIOM(LAMMPS *lmp, int narg, char **arg) :
   Fix(lmp, narg, arg)
 {
   master = universe->iworld == 0;
 
-  if (narg != 3)
+  if (narg < 3)
     error->all(FLERR,"Illegal fix oniom command");
 
   if (atom->tag_enable == 0)
@@ -55,6 +52,109 @@ FixONIOM::FixONIOM(LAMMPS *lmp, int narg, char **arg) :
 
   recv_count_buf = new int[universe->nprocs];
   displs_buf = new int[universe->nprocs];
+  // parse arguments
+  int iarg=3;
+  int iworld = universe->iworld;
+  while(iarg < narg){
+
+    /********************************************************
+     * Needs a static group of atoms and two slave partitions
+     ********************************************************/
+    if(strcmp(arg[iarg], "group") == 0){
+      if(iarg+3 > narg)
+        error->universe_all(FLERR, "Illegal oniom command");
+
+      // arg[iarg+1] is group
+      int mc_group = group->find(arg[iarg+1]);
+      if(mc_group == -1)
+        error->all(FLERR,"Could not find oniom group ID");
+      if(group->dynamic[mc_group])
+        error->all(FLERR,"MC group must be static");
+      bigint temp_mc = group->count(mc_group);
+      if(temp_mc > MAXSMALLINT){
+          error->all(FLERR,"Too many MC atoms for ONIOM calculation");
+      }
+      int mc_nat = static_cast<int>(temp_mc);
+
+      // arg[iarg+2] is low-level slave partition
+      int low = force->inumeric(FLERR, arg[iarg+2])-1;
+      if((low < 1 ) || (low>=universe->nworlds)){
+        error->universe_all(FLERR, "Invalid partition in oniom command");
+      }
+
+      // arg[iarg+3] is high-level slave partition
+      int high = force->inumeric(FLERR, arg[iarg+3])-1;
+      if((high < 1 ) || (high>=universe->nworlds)){
+        error->universe_all(FLERR, "Invalid partition in oniom command");
+      }
+
+      // push information to fix and create intercommunicators
+      if(!iworld){
+        // master partition
+        auto setupMPI = [&](int part, MPI_Comm& comm){
+          int me, flag{0};
+          MPI_Request req;
+          MPI_Comm_rank(world, &me);
+          if(me==0){
+            MPI_Isend(&part, 1, MPI_INT,
+                      universe->root_proc[part],
+                      part, universe->uworld, &req);
+            // wait for one minute to establish connection
+            int j{0};
+            for(; j<60; ++j){
+                MPI_Test(&req, &flag, MPI_STATUS_IGNORE);
+                if(flag) break;
+                usleep(1000000);
+            }
+            if(j >= 60) error->universe_one(FLERR, "Could not establish connection to oniom slave");
+          }
+          MPI_Intercomm_create(world, 0, universe->uworld,
+                               universe->root_proc[part], part, &comm);
+        };
+        int lowmode = FixONIOM::MINUS;
+        int highmode = FixONIOM::PLUS;
+        connections.push_back({lowmode, mc_group, mc_nat});
+        setupMPI(low, connections.back().comm);
+        connections.push_back({highmode, mc_group, mc_nat});
+        setupMPI(high, connections.back().comm);
+      }else if((iworld == (low)) || (iworld == (high))){
+        // slave partitions
+        if(!connections.empty()){
+          error->universe_one(FLERR, "Same partition used in multiple oniom regions");
+        }
+        connections.push_back({0, mc_group, mc_nat});
+        int me, flag{0}, tag;
+        MPI_Request req;
+        MPI_Comm_rank(world, &me);
+        if(me==0){
+          MPI_Irecv(&tag, 1, MPI_INT,
+                    universe->root_proc[0],
+                    universe->iworld, universe->uworld, &req);
+          // wait for one minute to establish connection
+          int j;
+          for(j=0; j<60; ++j){
+            MPI_Test(&req, &flag, MPI_STATUS_IGNORE);
+            if(flag) break;
+            usleep(1000000);
+          }
+          if(j>=60) error->universe_one(FLERR, "Could not establish connection to oniom master");
+        }
+        MPI_Intercomm_create(world, 0, universe->uworld,
+                             universe->root_proc[0], iworld,
+                             &connections.back().comm);
+      }
+      iarg += 4;
+
+    /********************
+     * Verbosity
+     ********************/
+    }else if(strcmp(arg[iarg], "verbose") == 0){
+      verbose = force->inumeric(FLERR, arg[iarg+1]);
+      iarg += 2;
+    }else{
+      error->universe_all(FLERR, "Illegal fix oniom command");
+    }
+  }
 }
 
 /*********************************
@@ -72,10 +172,12 @@ FixONIOM::~FixONIOM()
 /* ---------------------------------------------------------------------- */
 int FixONIOM::setmask()
 {
-  int mask = 0;
-  mask |= POST_INTEGRATE;
-  mask |= POST_FORCE;
-  return mask;
+  return POST_INTEGRATE
+       | POST_FORCE
+       | MIN_PRE_FORCE
+       | MIN_POST_FORCE
+       | POST_RUN
+       | END_OF_STEP;
 }
 
 /* ----------------------------------------------------------------------
@@ -420,8 +522,10 @@ void FixONIOM::send_forces()
 void FixONIOM::post_integrate()
 {
   if(master){
+    // MD master
     send_positions();
   }else{
+    // MD & MIN slave
     receive_positions();
   }
 }
@@ -430,11 +534,20 @@ void FixONIOM::post_integrate()
 
 void FixONIOM::setup(int)
 {
+  run_once = false;
   if(master){
+    // MD master
     receive_forces();
   }else{
+    // MD & MIN slave
     send_forces();
   }
+}
+
+void FixONIOM::min_setup(int)
+{
+  // MIN master
+  receive_forces();
 }
 
 /* ---------------------------------------------------------------------- */
@@ -442,9 +555,87 @@ void FixONIOM::setup(int)
 void FixONIOM::post_force(int)
 {
   if(master){
+    // MD master
     receive_forces();
   }else{
+    // MD & MIN slave
     send_forces();
+  }
+}
+
+/* ---------------------------------------------------------------------- */
+
+void FixONIOM::min_pre_force(int)
+{
+  // MIN master
+  // tell slaves to continue faux MD after first step
+  if(!run_once){
+      run_once = true;
+  }else{
+    if((comm->me == 0) && (verbose > 0)){
+      const char msg[] = "ONIOM: Minimization not converged, continuing slave-MDs\n";
+      if (screen) fprintf(screen, msg);
+      if (logfile) fprintf(logfile, msg);
+    }
+    for(auto& con: connections){
+      auto root = (comm->me == 0) ? MPI_ROOT : MPI_PROC_NULL;
+      uint8_t f{false};
+      MPI_Bcast(&f, 1, MPI_BYTE, root, con.comm);
+    }
+  }
+  send_positions();
+}
+
+/* ---------------------------------------------------------------------- */
+
+void FixONIOM::min_post_force(int)
+{
+  // MIN master
+  receive_forces();
+}
+
+/* ---------------------------------------------------------------------- */
+
+void FixONIOM::end_of_step()
+{
+  // MIN slave
+  if(minimize && !master){
+    // get convergence state
+    uint8_t converged{0};
+    MPI_Bcast(&converged, 1, MPI_BYTE, 0, connections.front().comm);
+    if(converged){
+      // trigger timeout if converged
+      if((comm->me == 0) && (verbose > 0)){
+        const char msg[] = "ONIOM: Ending run early because master converged minimization\n";
+        if (screen) fprintf(screen, msg);
+        if (logfile) fprintf(logfile, msg);
+      }
+      timer->force_timeout();
+    }else if((comm->me == 0) && (verbose > 0)){
+      const char msg[] = "ONIOM: Continuing MD to accompany minimization\n";
+      if (screen) fprintf(screen, msg);
+      if (logfile) fprintf(logfile, msg);
+    }
+  }
+}
+
+/* ---------------------------------------------------------------------- */
+
+void FixONIOM::post_run()
+{
+  // MIN master
+  if(minimize && master){
+    // tell slaves to end faux MD
+    if((comm->me == 0) && (verbose > 0)){
+      const char msg[] = "ONIOM: Minimization converged, cancelling slave-MDs\n";
+      if (screen) fprintf(screen, msg);
+      if (logfile) fprintf(logfile, msg);
+    }
+    for(auto& con: connections){
+      auto root = (comm->me == 0) ? MPI_ROOT : MPI_PROC_NULL;
+      uint8_t t{true};
+      MPI_Bcast(&t, 1, MPI_BYTE, root, con.comm);
+    }
   }
 }
 
