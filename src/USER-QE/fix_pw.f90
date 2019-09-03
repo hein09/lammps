@@ -6,6 +6,7 @@
 
 MODULE fix_pw
 
+  USE kinds,         ONLY: DP
   USE io_global,     ONLY: stdout, ionode, ionode_id
   USE util_param,    ONLY: utilout => stdout
   USE ions_base,     ONLY: nat
@@ -82,7 +83,6 @@ MODULE fix_pw
     ! TODO: can we use the stop-mechanism somehow?
       CALL check_stop_init()
       CALL setup()
-      ! TODO: fails in parallel
       CALL init_run()
     ! TODO: send positions a first time?
     !
@@ -113,16 +113,25 @@ MODULE fix_pw
       USE ISO_C_BINDING
       USE extrapolation, ONLY: update_pot
       USE constants,     ONLY: bohr_radius_angs
-      USE cell_base,     ONLY: alat
+      USE cell_base,     ONLY: alat, at
       USE ions_base,     ONLY: tau
       USE mp_world,      ONLY: world_comm
       USE mp,            ONLY: mp_bcast
       IMPLICIT NONE
       REAL(kind=c_double), INTENT(IN) :: pos(3, nat)
       INTEGER(kind=c_int), VALUE :: root
-      ! exchange positions
+      REAL(DP), DIMENSION(3) :: com
+      REAL(DP), DIMENSION(3) :: coc
+      INTEGER :: i
+      ! exchange and re-center positions
       IF (root /= 0) THEN
-        tau = pos / (alat * bohr_radius_angs)
+        ! center of cell
+        coc = MATMUL(at, (/0.5d0, 0.5d0, 0.5d0/))
+        ! center of molecule
+        com = SUM(pos, dim=2) / nat
+        DO i = 1, nat
+            tau(:, i) = pos(:, i) / (alat * bohr_radius_angs) + coc - com
+        END DO
       END IF
       CALL mp_bcast(tau, ionode_id, world_comm)
       ! update wavefunctions
