@@ -186,8 +186,8 @@ int FixONIOM::setmask()
 
 void FixONIOM::init()
 {
-  if (strstr(update->integrate_style,"respa"))
-    error->all(FLERR,"ONIOM does not currently support r-RESPA");
+  if (!strstr(update->integrate_style,"verlet"))
+    error->all(FLERR,"ONIOM currently only supports run_style verlet");
 
   if(!comm->me && !master && modify->n_final_integrate){
     error->warning(FLERR,
@@ -646,8 +646,8 @@ double FixONIOM::memory_usage(void)
   double bytes;
 
   bytes = sizeof(FixONIOM);
-  bytes += connections.size() * sizeof(conn_t);
-  bytes += comm_buf.size() * sizeof(commdata_t);
+  bytes += connections.capacity() * sizeof(conn_t);
+  bytes += comm_buf.capacity() * sizeof(commdata_t);
 
   return bytes;
 }

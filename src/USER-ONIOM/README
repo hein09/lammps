@@ -1,7 +1,0 @@
-This package implements the "oniom" command which can be used
-in a LAMMPS input script.
-
-This enables LAMMPS to be used in a ONIOM-Style QM/MM simulation.
-
-This is adopted and expanded by Sebastian Gsänger at FAU (sebastian.gsaenger at fau.de)
-from the original "fix qmmm" by Axel Kohlmeyer at Temple U (akohlmey at gmail.com).
