@@ -30,9 +30,12 @@ class FixPW : public Fix {
   FixPW(class LAMMPS *, int, char **);
   virtual ~FixPW() override;
   int setmask() override;
-  void post_force(int) override;
+  // sending positions
   void post_integrate() override;
-//  void min_post_force(int);
+  void min_pre_force(int) override;
+  // receiving forces
+  void post_force(int) override;
+  void min_post_force(int) override;
 //  double compute_scalar() override;
 //  double memory_usage() override;
  protected:

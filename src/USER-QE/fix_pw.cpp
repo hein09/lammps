@@ -156,14 +156,19 @@ FixPW::~FixPW()
 
 int FixPW::setmask()
 {
-  int mask = 0;
-  mask |= POST_FORCE;
-  mask |= POST_INTEGRATE;
-//  mask |= THERMO_ENERGY;
-  return mask;
+  return POST_FORCE
+       | MIN_POST_FORCE
+       | POST_INTEGRATE
+       | MIN_PRE_FORCE
+  ;
 }
 
 // TODO: collective communications may be optimized (away?)
+
+void FixPW::min_post_force(int i)
+{
+    post_force(i);
+}
 
 void FixPW::post_force(int)
 {
@@ -189,6 +194,11 @@ void FixPW::post_force(int)
       }
     }
   }
+}
+
+void FixPW::min_pre_force(int)
+{
+    post_integrate();
 }
 
 void FixPW::post_integrate()
