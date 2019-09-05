@@ -40,13 +40,32 @@ class FixPW : public Fix {
   double compute_scalar() override;
 //  double memory_usage() override;
  protected:
+  int ec_group{-1}; // id of electrostatic coupling group
   int npool{1}, ntask{1}, nband{1}, ndiag{1}; // PWScf partition flags
   bigint nqm;    // number of QM atoms
+  bigint nec;    // number of EC atoms
   double fscale; // scale factor for forces
   std::string inp_file; // PWScf input file name
   std::string out_file; // PWScf output file name
+
+  // keep track of atoms
   std::vector<tagint> tags; // save tags to correctly assign atoms
   std::map<tagint, int> hash; // assign tags to their qm-id
+
+  // link atoms
+  struct linkgroup{
+      tagint link_atom;
+      tagint qm_atom;
+      double ratio;
+  };
+  std::vector<linkgroup> linkatoms; // tags of link atoms
+
+  // handle charges at link atoms
+  enum class charge_t{Z1, Z2, Z3, RCD, CS};
+  charge_t charge_scheme{charge_t::Z1};
+  std::vector<std::pair<tagint, tagint>> chargeatoms; // tags of atoms with modified charges
+
+  // communication
   struct commdata_t{
     int tag;
     double x,y,z;
