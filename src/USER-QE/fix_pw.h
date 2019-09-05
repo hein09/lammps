@@ -36,7 +36,8 @@ class FixPW : public Fix {
   // receiving forces
   void post_force(int) override;
   void min_post_force(int) override;
-//  double compute_scalar() override;
+  // report internals
+  double compute_scalar() override;
 //  double memory_usage() override;
  protected:
   int npool{1}, ntask{1}, nband{1}, ndiag{1}; // PWScf partition flags
