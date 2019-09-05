@@ -15,6 +15,15 @@ MODULE fix_pw
 
   CONTAINS
 
+    PURE FUNCTION energy_pw() BIND(C)
+        USE ISO_C_BINDING
+        USE ener, ONLY: etot
+        IMPLICIT NONE
+        REAL(kind=C_DOUBLE) :: energy_pw
+        energy_pw = etot
+        RETURN
+    END FUNCTION
+
     SUBROUTINE start_pw(comm, nimage, npool, ntask, nband, ndiag, infile, outfile, c_nat) BIND(C)
       USE ISO_C_BINDING
       USE command_line_options, ONLY: set_command_line
@@ -92,24 +101,25 @@ MODULE fix_pw
       c_nat = nat
     END SUBROUTINE start_pw
 
-    SUBROUTINE calc_pw(f, root) BIND(C)
+    SUBROUTINE calc_pw(f) BIND(C)
       USE ISO_C_BINDING
       USE extrapolation, ONLY: update_file
       USE force_mod,     ONLY: force
       IMPLICIT NONE
       REAL(kind=c_double), INTENT(OUT) :: f(3, nat)
-      INTEGER(kind=c_int), VALUE :: root
       ! scf calculation
       CALL electrons()
       ! force calculation
       CALL forces()
+      ! print coordinates in expected place
+      CALL output_tau(.false., .false.)
       ! exchange forces
       f = force
       ! make sure extrapolation works
       CALL update_file()
     END SUBROUTINE calc_pw
 
-    SUBROUTINE update_pw(pos, root) BIND(c)
+    SUBROUTINE update_pw(pos) BIND(c)
       USE ISO_C_BINDING
       USE extrapolation, ONLY: update_pot
       USE constants,     ONLY: bohr_radius_angs
@@ -119,12 +129,11 @@ MODULE fix_pw
       USE mp,            ONLY: mp_bcast
       IMPLICIT NONE
       REAL(kind=c_double), INTENT(IN) :: pos(3, nat)
-      INTEGER(kind=c_int), VALUE :: root
       REAL(DP), DIMENSION(3) :: com
       REAL(DP), DIMENSION(3) :: coc
       INTEGER :: i
       ! exchange and re-center positions
-      IF (root /= 0) THEN
+      IF (ionode) THEN
         ! center of cell
         coc = MATMUL(at, (/0.5d0, 0.5d0, 0.5d0/))
         ! center of molecule

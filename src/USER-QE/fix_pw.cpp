@@ -40,6 +40,7 @@ void start_pw(MPI_Fint comm, int nimage, int npool, int ntaskgroup, int nband, i
 void update_pw(double *x, int root);
 void calc_pw(double *f, int root);
 void end_pw(int *exit_status);
+double energy_pw(void);
 }
 
 /* ---------------------------------------------------------------------- */
@@ -160,7 +161,13 @@ int FixPW::setmask()
        | MIN_POST_FORCE
        | POST_INTEGRATE
        | MIN_PRE_FORCE
+       | THERMO_ENERGY
   ;
+}
+
+double FixPW::compute_scalar()
+{
+  return energy_pw();
 }
 
 // TODO: collective communications may be optimized (away?)
