@@ -42,15 +42,17 @@ class FixPW : public Fix {
  protected:
   int ec_group{-1}; // id of electrostatic coupling group
   int npool{1}, ntask{1}, nband{1}, ndiag{1}; // PWScf partition flags
-  bigint nqm;    // number of QM atoms
-  bigint nec;    // number of EC atoms
-  double fscale; // scale factor for forces
+  bigint nqm{};    // number of QM atoms
+  bigint nec{};    // number of EC atoms
+  double fscale{}; // scale factor for forces
   std::string inp_file; // PWScf input file name
   std::string out_file; // PWScf output file name
 
   // keep track of atoms
-  std::vector<tagint> tags; // save tags to correctly assign atoms
-  std::map<tagint, int> hash; // assign tags to their qm-id
+  std::vector<tagint> qm_tags; // save tags to correctly assign atoms
+  std::vector<tagint> ec_tags;
+  std::map<tagint, int> qm_hash; // assign tags to their qm-id
+  std::map<tagint, int> ec_hash;
 
   // link atoms
   struct linkgroup{
@@ -70,9 +72,10 @@ class FixPW : public Fix {
     int tag;
     double x,y,z;
   };
-  std::vector<commdata_t> comm_buf; // buffer for internal communication
-  double** double_buf{nullptr}; // buffer for communicating to pwscf
-  int *recv_count_buf;
+  std::vector<commdata_t> comm_buf; // buffer for lammps-internal communication
+  double** qm_buf{nullptr}; // buffer for communicating qm-atoms to pwscf
+  double** ec_buf{nullptr}; // buffer for communicating ec-atoms to pscf
+  int *recv_count_buf; // buffer for variable-size collectives
   int *displs_buf;
 };
 

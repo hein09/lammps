@@ -6,6 +6,7 @@
 
 MODULE fix_pw
 
+  USE ISO_C_BINDING
   USE kinds,         ONLY: DP
   USE io_global,     ONLY: stdout, ionode, ionode_id
   USE util_param,    ONLY: utilout => stdout
@@ -13,10 +14,11 @@ MODULE fix_pw
 
   IMPLICIT NONE
 
+  INTEGER (kind=C_LONG) :: nec=0
+
   CONTAINS
 
     PURE FUNCTION energy_pw() BIND(C)
-        USE ISO_C_BINDING
         USE ener, ONLY: etot
         IMPLICIT NONE
         REAL(kind=C_DOUBLE) :: energy_pw
@@ -24,8 +26,7 @@ MODULE fix_pw
         RETURN
     END FUNCTION
 
-    SUBROUTINE start_pw(comm, nimage, npool, ntask, nband, ndiag, infile, outfile, c_nat) BIND(C)
-      USE ISO_C_BINDING
+    SUBROUTINE start_pw(comm, nimage, npool, ntask, nband, ndiag, infile, outfile, c_nec, c_nat) BIND(C)
       USE command_line_options, ONLY: set_command_line
       USE mp_global,            ONLY: mp_startup
       USE environment,          ONLY: environment_start
@@ -38,9 +39,10 @@ MODULE fix_pw
       IMPLICIT NONE
       !
       INTEGER, VALUE :: comm
-      INTEGER (kind=C_INT), VALUE :: nimage, npool, ntask, nband, ndiag
+      INTEGER (kind=C_INT), INTENT(IN), VALUE :: nimage, npool, ntask, nband, ndiag
       INTEGER :: comm_, nimage_, npool_, ntask_, nband_, ndiag_
       INTEGER (kind=C_INT), INTENT(OUT) :: c_nat
+      INTEGER (kind=C_LONG), INTENT(IN), VALUE :: c_nec
       CHARACTER (kind=C_CHAR), INTENT(IN) :: infile(*), outfile(*)
       CHARACTER(LEN=80) :: infile_, outfile_
       INTEGER :: i
@@ -99,14 +101,16 @@ MODULE fix_pw
       first_time = .false.
       ! send back nat to calling code
       c_nat = nat
+      ! save number of EC atoms
+      nec = c_nec
     END SUBROUTINE start_pw
 
-    SUBROUTINE calc_pw(f) BIND(C)
-      USE ISO_C_BINDING
+    SUBROUTINE calc_pw(f_qm, f_ec) BIND(C)
       USE extrapolation, ONLY: update_file
       USE force_mod,     ONLY: force
       IMPLICIT NONE
-      REAL(kind=c_double), INTENT(OUT) :: f(3, nat)
+      REAL(kind=c_double), INTENT(OUT) :: f_qm(3, nat)
+      REAL(kind=c_double), INTENT(OUT) :: f_ec(3, nec)
       ! scf calculation
       CALL electrons()
       ! force calculation
@@ -114,13 +118,12 @@ MODULE fix_pw
       ! print coordinates in expected place
       CALL output_tau(.false., .false.)
       ! exchange forces
-      f = force
+      f_qm = force
       ! make sure extrapolation works
       CALL update_file()
     END SUBROUTINE calc_pw
 
-    SUBROUTINE update_pw(pos) BIND(c)
-      USE ISO_C_BINDING
+    SUBROUTINE update_pw(pos_qm, pos_ec) BIND(c)
       USE extrapolation, ONLY: update_pot
       USE constants,     ONLY: bohr_radius_angs
       USE cell_base,     ONLY: alat, at
@@ -128,7 +131,8 @@ MODULE fix_pw
       USE mp_world,      ONLY: world_comm
       USE mp,            ONLY: mp_bcast
       IMPLICIT NONE
-      REAL(kind=c_double), INTENT(IN) :: pos(3, nat)
+      REAL(kind=c_double), INTENT(IN) :: pos_qm(3, nat)
+      REAL(kind=c_double), INTENT(IN) :: pos_ec(3, nec)
       REAL(DP), DIMENSION(3) :: com
       REAL(DP), DIMENSION(3) :: coc
       INTEGER :: i
@@ -137,9 +141,9 @@ MODULE fix_pw
         ! center of cell
         coc = MATMUL(at, (/0.5d0, 0.5d0, 0.5d0/))
         ! center of molecule
-        com = SUM(pos, dim=2) / nat
+        com = SUM(pos_qm, dim=2) / nat
         DO i = 1, nat
-            tau(:, i) = pos(:, i) / (alat * bohr_radius_angs) + coc - com
+            tau(:, i) = pos_qm(:, i) / (alat * bohr_radius_angs) + coc - com
         END DO
       END IF
       CALL mp_bcast(tau, ionode_id, world_comm)
@@ -150,7 +154,6 @@ MODULE fix_pw
     END SUBROUTINE update_pw
 
     SUBROUTINE end_pw(retval) BIND(C)
-      USE ISO_C_BINDING
       IMPLICIT NONE
       INTEGER (kind=C_INT), INTENT(OUT) :: retval
       CALL stop_run(retval)
