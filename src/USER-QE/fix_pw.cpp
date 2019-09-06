@@ -34,10 +34,10 @@ using namespace FixConst;
 
 extern "C" {
 void start_pw(MPI_Fint comm, int nimage, int npool, int ntaskgroup, int nband, int ndiag,
-              const char *input_file, const char *output_file,
+              const char *input_file, const char *output_file, bigint nec,
               int* nat);
-void update_pw(double *x);
-void calc_pw(double *f);
+void update_pw(double *x_qm, double *x_ec);
+void calc_pw(double *f_qm, double *f_ec);
 void end_pw(int *exit_status);
 double energy_pw(void);
 }
@@ -129,7 +129,7 @@ FixPW::FixPW(LAMMPS *l, int narg, char **arg):
   }
 
   // collect atoms bound to ID on proc 0
-  auto getBoundNeighbors = [this](tagint tag, int mask, int dist=0){
+  auto get_bound_neighbors = [this](tagint tag, int mask, int dist=0){
     int idx = atom->map(tag);
     std::vector<tagint> list;
     if(idx != -1){
@@ -170,16 +170,15 @@ FixPW::FixPW(LAMMPS *l, int narg, char **arg):
       atom->map_init();
       atom->map_set();
     }
-    const auto qmmask = group->bitmask[igroup];
     for(auto& link: linkatoms){
       // check if link atom is in QM group
       auto idx = atom->map(link.link_atom);
-      if((idx != -1) && !(atom->mask[idx] & qmmask)){
+      if((idx != -1) && !(atom->mask[idx] & groupbit)){
           char msg[50];
           sprintf(msg, "Link atom %d is not included in QM group.", link.link_atom);
           error->one(FLERR, msg);
       }
-      auto neighbors = getBoundNeighbors(link.link_atom, qmmask);
+      auto neighbors = get_bound_neighbors(link.link_atom, groupbit);
       if(comm->me == 0){
         if(neighbors.empty()){
           char msg[50];
@@ -195,7 +194,7 @@ FixPW::FixPW(LAMMPS *l, int narg, char **arg):
       }
     }
     // if needed, find atoms whose charges need to be modified
-    if(ec_group != -1){
+    if(ec_group >= 0){
       const auto ecmask = group->bitmask[ec_group];
       if(charge_scheme == charge_t::Z1){
         // only ignore charge of link-atoms,
@@ -203,7 +202,7 @@ FixPW::FixPW(LAMMPS *l, int narg, char **arg):
       }else if(charge_scheme == charge_t::Z2){
         // ignore charge of 1-2 neighbors
         for(const auto& link: linkatoms){
-          auto neighbors = getBoundNeighbors(link.link_atom, ecmask);
+          auto neighbors = get_bound_neighbors(link.link_atom, ecmask);
           for(const auto& n: neighbors){
             chargeatoms.push_back({n, -1});
           }
@@ -211,16 +210,15 @@ FixPW::FixPW(LAMMPS *l, int narg, char **arg):
       }else if(charge_scheme == charge_t::Z3){
         // ignore charge of 1-2 and 1-3 neighbors
         for(const auto& link: linkatoms){
-          auto neighbors = getBoundNeighbors(link.link_atom, ecmask, 1);
+          auto neighbors = get_bound_neighbors(link.link_atom, ecmask, 1);
           for(const auto& n: neighbors){
             chargeatoms.push_back({n, -1});
           }
         }
-      }
-      if((charge_scheme == charge_t::RCD) || (charge_scheme == charge_t::CS)){
+      }else if((charge_scheme == charge_t::RCD) || (charge_scheme == charge_t::CS)){
         // create virtual point charges depending on 1-2 neighbors
         for(const auto& link: linkatoms){
-          auto neighbors = getBoundNeighbors(link.link_atom, ecmask);
+          auto neighbors = get_bound_neighbors(link.link_atom, ecmask);
           for(const auto& n: neighbors){
             chargeatoms.push_back({n, link.link_atom});
           }
@@ -241,27 +239,36 @@ FixPW::FixPW(LAMMPS *l, int narg, char **arg):
   }
 
   // calculate number of EC atoms
-  if(ec_group != -1){
-    switch(charge_scheme){
-    case charge_t::Z1:
-      nec = group->count(ec_group);
-      break;
-    case charge_t::Z2:
-    case charge_t::Z3:
-      nec = group->count(ec_group) - chargeatoms.size();
-      break;
-    case charge_t::RCD:
-      nec = group->count(ec_group) + chargeatoms.size();
-      break;
-    case charge_t::CS:
-      nec = group->count(ec_group) + 2*chargeatoms.size();
-      break;
-    default:
-      error->all(FLERR, "Invalid charge redistribution scheme");
+  if(ec_group >= 0){
+    nec = group->count(ec_group);
+    if(comm->me == 0){
+      switch(charge_scheme){
+      case charge_t::Z1:
+        break;
+      case charge_t::Z2:
+      case charge_t::Z3:
+        nec -= chargeatoms.size();
+        break;
+      case charge_t::RCD:
+        nec += chargeatoms.size();
+        break;
+      case charge_t::CS:
+        nec += 2*chargeatoms.size();
+        break;
+      default:
+        error->all(FLERR, "Invalid charge redistribution scheme");
+      }
     }
+    MPI_Bcast(&nec, 1, MPI_LMP_BIGINT, 0, world);
+    if(nec > MAXSMALLINT){
+      error->all(FLERR, "Too many EC atoms for fix qe/pw.");
+    }
+  }else{
+    // dummy-initialize this so we have valid pointers
+    memory->grow(ec_buf, 1, 3, "pw/qe:ec_buf");
   }
 
-  // initialize PWScf, receive number of qm-atoms
+  // initialize PWScf, compare number of qm-atoms
   int nat{0};
   nqm = group->count(igroup);
   if(nqm > MAXSMALLINT){
@@ -269,9 +276,8 @@ FixPW::FixPW(LAMMPS *l, int narg, char **arg):
   }
 
   start_pw(MPI_Comm_c2f(world), 1, npool, ntask, nband, ndiag,
-           inp_file.data(), out_file.data(), &nat);
+           inp_file.data(), out_file.data(), nec, &nat);
 
-  // check if pw has been launched succesfully and with compatible input
   /* NOTE: using one, not sure if a stray pwscf process may run off.
    * may be if pw had been compiled against a different MPI version.
    * if so, may be resolved if building pw is done via lammps' buildsystem.
@@ -282,37 +288,46 @@ FixPW::FixPW(LAMMPS *l, int narg, char **arg):
     error->one(FLERR, "Mismatching number of atoms in fix qe/pw.");
   }
 
-  // collect and save tags of main group
+
+  // init comm-buffers
   recv_count_buf = new int[universe->nprocs];
   displs_buf = new int[universe->nprocs];
+  // check if pw has been launched succesfully and with compatible input
+  auto collect_tags = [this](int mask, bigint nat, auto& tags, auto& hash){
+    // collect process-local tags
+    std::vector<tagint> tmp{};
+    tmp.reserve(static_cast<size_t>(nat));
+    for(int i=0; i<atom->nlocal; ++i){
+      if(atom->mask[i] & mask)
+        tmp.push_back(atom->tag[i]);
+    }
 
-  // collect process-local tags
-  decltype (tags) tmp{};
-  tmp.reserve(static_cast<size_t>(nqm));
-  for(int i=0; i<atom->nlocal; ++i){
-    if(atom->mask[i] & groupbit)
-      tmp.push_back(atom->tag[i]);
-  }
+    // gather number of tags
+    int send_count = tmp.size() * sizeof(decltype (tmp)::value_type);
+    MPI_Allgather(&send_count, 1, MPI_INT, recv_count_buf, 1, MPI_INT, world);
 
-  // gather number of tags
-  int send_count = tmp.size() * sizeof(decltype (tmp)::value_type);
-  MPI_Allgather(&send_count, 1, MPI_INT, recv_count_buf, 1, MPI_INT, world);
+    // construct displacement
+    displs_buf[0] = 0;
+    for(int i=1; i<universe->nprocs; ++i){
+      displs_buf[i] = displs_buf[i-1]+recv_count_buf[i-1];
+    }
 
-  // construct displacement
-  displs_buf[0] = 0;
-  for(int i=1; i<universe->nprocs; ++i){
-    displs_buf[i] = displs_buf[i-1]+recv_count_buf[i-1];
-  }
+    // gather and sort tags
+    tags.resize(static_cast<size_t>(nat));
+    MPI_Allgatherv(tmp.data(), send_count, MPI_BYTE,
+                   tags.data(), recv_count_buf, displs_buf, MPI_BYTE, world);
+    std::sort(tags.begin(), tags.end());
 
-  // gather and sort tags
-  tags.resize(static_cast<size_t>(nqm));
-  MPI_Allgatherv(tmp.data(), send_count, MPI_BYTE,
-                 tags.data(), recv_count_buf, displs_buf, MPI_BYTE, world);
-  std::sort(tags.begin(), tags.end());
-
-  // assign tags to qm-id
-  for(int i=0; i<nqm; ++i){
-    hash[tags[i]] = i;
+    // assign tags to qm-id
+    for(int i=0; i<nqm; ++i){
+      hash[tags[i]] = i;
+    }
+  };
+  // collect and save tags of main group
+  collect_tags(groupbit, nqm, qm_tags, qm_hash);
+  if(ec_group >= 0){
+    const auto ecmask = group->bitmask[ec_group];
+    collect_tags(ecmask, nec, ec_tags, ec_hash);
   }
 }
 
@@ -322,8 +337,8 @@ FixPW::~FixPW()
   end_pw(&result);
 
   delete [] recv_count_buf;
-  delete [] displs_buf;
-  memory->destroy(double_buf);
+  memory->destroy(qm_buf);
+  memory->destroy(ec_buf);
 }
 
 int FixPW::setmask()
@@ -351,11 +366,11 @@ void FixPW::min_post_force(int i)
 void FixPW::post_force(int)
 {
   // run scf and receive forces
-  calc_pw(double_buf[0]);
+  calc_pw(qm_buf[0], ec_buf[0]);
   // redistribute forces of link atoms
   for(const auto& l: linkatoms){
-    double* forceL = double_buf[hash[l.link_atom]];
-    double* forceQ = double_buf[hash[l.qm_atom]];
+    double* forceL = qm_buf[qm_hash[l.link_atom]];
+    double* forceQ = qm_buf[qm_hash[l.qm_atom]];
     forceQ[0] += (1-l.ratio)*forceL[0];
     forceQ[1] += (1-l.ratio)*forceL[1];
     forceQ[2] += (1-l.ratio)*forceL[2];
@@ -363,26 +378,32 @@ void FixPW::post_force(int)
     forceL[1] *= l.ratio;
     forceL[2] *= l.ratio;
   }
-  // communicate forces to other lammps processes
-  if(comm->me == 0){
-    for(int i=0; i<nqm; ++i){
-      comm_buf[i] = {i, double_buf[i][0],
-                     double_buf[i][1], double_buf[i][2]};
-    }
-  }
-  MPI_Bcast(comm_buf.data(), nqm*sizeof(decltype(comm_buf)::value_type), MPI_BYTE, 0, world);
-  // add forces
-  const tagint * const tag = atom->tag;
-  double ** f = atom->f;
-  for(int i=0; i<atom->nlocal; ++i){
-    for(auto& dat: comm_buf){
-      if(tag[i] == dat.tag){
-        f[i][0] += dat.x*fscale;
-        f[i][1] += dat.y*fscale;
-        f[i][2] += dat.z*fscale;
+  // distribute forces across lammps processes
+  auto distribute_forces = [this](bigint nat, double** buffer){
+    // sync buffer
+    comm_buf.resize(static_cast<size_t>(nat));
+    if(comm->me == 0){
+      for(int i=0; i<nat; ++i){
+        comm_buf[i] = {i, buffer[i][0],
+                       buffer[i][1], buffer[i][2]};
       }
     }
-  }
+    MPI_Bcast(comm_buf.data(), nat*sizeof(decltype(comm_buf)::value_type), MPI_BYTE, 0, world);
+    // add forces to local atoms
+    const tagint * const tag = atom->tag;
+    double ** f = atom->f;
+    for(int i=0; i<atom->nlocal; ++i){
+      for(auto& dat: comm_buf){
+        if(tag[i] == dat.tag){
+          f[i][0] += dat.x*fscale;
+          f[i][1] += dat.y*fscale;
+          f[i][2] += dat.z*fscale;
+        }
+      }
+    }
+  };
+  distribute_forces(nqm, qm_buf);
+//  if(ec_group >= 0) distribute_forces(nec, ec_buf);
 }
 
 void FixPW::min_pre_force(int)
@@ -392,49 +413,55 @@ void FixPW::min_pre_force(int)
 
 void FixPW::post_integrate()
 {
-  // collect coordinates
-  const int *const mask = atom->mask;
-  const tagint * const tag = atom->tag;
-  const double * const * const x = atom->x;
-
-  // collect atom positions in buffer
-  decltype(comm_buf) tmp;
-  tmp.reserve(static_cast<size_t>(nqm));
-  for(int i=0; i<atom->nlocal; ++i){
-    if(mask[i] & groupbit){
-      tmp.push_back({hash.at(tag[i]), x[i][0], x[i][1], x[i][2]});
+  // collect positions of lammps processes on proc 0
+  auto collect_positions = [this](bigint nat, double** buffer){
+    const int *const mask = atom->mask;
+    const tagint * const tag = atom->tag;
+    const double * const * const x = atom->x;
+    // collect local atom positions
+    decltype(comm_buf) tmp;
+    tmp.reserve(static_cast<size_t>(nat));
+    for(int i=0; i<atom->nlocal; ++i){
+      if(mask[i] & groupbit){
+        tmp.push_back({qm_hash.at(tag[i]), x[i][0], x[i][1], x[i][2]});
+      }
     }
-  }
-  // gather number of local atoms
-  int send_count = tmp.size() * sizeof(decltype (tmp)::value_type);
-  MPI_Allgather(&send_count, 1, MPI_INT, recv_count_buf, 1, MPI_INT, world);
-  // construct displacement
-  displs_buf[0] = 0;
-  for(int i=1; i<universe->nprocs; ++i){
-    displs_buf[i] = displs_buf[i-1]+recv_count_buf[i-1];
-  }
-  // gather comm_buf
-  comm_buf.resize(static_cast<size_t>(nqm));
-  MPI_Allgatherv(tmp.data(), send_count, MPI_BYTE,
-                 comm_buf.data(), recv_count_buf, displs_buf, MPI_BYTE, world);
+    // collect each proc's number of atoms
+    int send_count = tmp.size() * sizeof(decltype (tmp)::value_type);
+    MPI_Allgather(&send_count, 1, MPI_INT, recv_count_buf, 1, MPI_INT, world);
+    // construct displacement
+    displs_buf[0] = 0;
+    for(int i=1; i<universe->nprocs; ++i){
+      displs_buf[i] = displs_buf[i-1]+recv_count_buf[i-1];
+    }
+    // collect position
+    comm_buf.resize(static_cast<size_t>(nat));
+    MPI_Allgatherv(tmp.data(), send_count, MPI_BYTE,
+                   comm_buf.data(), recv_count_buf, displs_buf, MPI_BYTE, world);
 
-  // extract data to contiguous memory
-  memory->grow(double_buf, static_cast<int>(nqm), 3, "pw/qe:double_buf");
-  for(auto& dat: comm_buf){
-    double_buf[dat.tag][0] = dat.x;
-    double_buf[dat.tag][1] = dat.y;
-    double_buf[dat.tag][2] = dat.z;
+    // extract data to contiguous memory
+    for(auto& dat: comm_buf){
+      buffer[dat.tag][0] = dat.x;
+      buffer[dat.tag][1] = dat.y;
+      buffer[dat.tag][2] = dat.z;
+    }
+  };
+  memory->grow(qm_buf, static_cast<int>(nqm), 3, "pw/qe:qm_buf");
+  collect_positions(nqm, qm_buf);
+  if(ec_group >= 0){
+    memory->grow(ec_buf, static_cast<int>(nec), 3, "pw/qe:ec_buf");
+    collect_positions(nec, ec_buf);
   }
+
   // modify positions of link atoms
   for(const auto& l: linkatoms){
-    double* posL = double_buf[hash[l.link_atom]];
-    double* posQ = double_buf[hash[l.qm_atom]];
+    double* posL = qm_buf[qm_hash[l.link_atom]];
+    double* posQ = qm_buf[qm_hash[l.qm_atom]];
     posL[0] = posQ[0] + l.ratio * (posL[0]-posQ[0]);
     posL[1] = posQ[1] + l.ratio * (posL[1]-posQ[1]);
     posL[2] = posQ[2] + l.ratio * (posL[2]-posQ[2]);
   }
 
-  MPI_Barrier(world);
   // transmit to PWScf
-  update_pw(double_buf[0]);
+  update_pw(qm_buf[0], ec_buf[0]);
 }
