@@ -22,6 +22,8 @@ FixStyle(qe/pw,FixPW)
 
 #include "fix.h"
 #include <vector>
+#include <string>
+#include <map>
 
 namespace LAMMPS_NS {
 
