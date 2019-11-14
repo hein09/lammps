@@ -17,6 +17,7 @@
 
 #include <algorithm>
 #include <unistd.h>
+#include <cstring>
 
 #include "fix_oniom.h"
 

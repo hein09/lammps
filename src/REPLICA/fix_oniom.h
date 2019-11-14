@@ -23,6 +23,7 @@ FixStyle(ONIOM,FixONIOM)
 
 #include "fix.h"
 #include <vector>
+#include <map>
 
 namespace LAMMPS_NS {
 

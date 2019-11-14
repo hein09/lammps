@@ -15,6 +15,8 @@
    Contributing author:  Sebastian Gsänger (FAU)
 ------------------------------------------------------------------------- */
 
+#include <cstring>
+
 #include "oniom.h"
 #include "fix_oniom.h"
 
