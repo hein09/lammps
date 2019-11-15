@@ -103,7 +103,7 @@ FixPW::FixPW(LAMMPS *l, int narg, char **arg):
                         force->numeric(FLERR, arg[iarg+3+i])};
       }
       auto last = std::unique(linkatoms.begin(), linkatoms.end(),
-                              [](const auto& l, const auto& r)
+                              [](const linkgroup& l, const linkgroup& r)
                               {return l.link_atom == r.link_atom;});
       if(last != linkatoms.end()){
         error->all(FLERR, "Duplicate entries in list of link atoms");
@@ -294,7 +294,7 @@ FixPW::FixPW(LAMMPS *l, int narg, char **arg):
   recv_count_buf = new int[universe->nprocs];
   displs_buf = new int[universe->nprocs];
   // check if pw has been launched succesfully and with compatible input
-  auto collect_tags = [this](int mask, bigint nat, auto& tags, auto& hash){
+  auto collect_tags = [this](int mask, bigint nat, std::vector<tagint>& tags, std::map<tagint, int>& hash){
     // collect process-local tags
     std::vector<tagint> tmp{};
     tmp.reserve(static_cast<size_t>(nat));
