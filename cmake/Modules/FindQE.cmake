@@ -2,7 +2,9 @@
 # Find the native QE headers and libraries.
 #
 #  QE_INCLUDE_DIRS - where to find libqecouple.h, etc.
-#  QE_LIBRARIES    - List of libraries when using quantum-espresso.
+#  QE_LIBRARIES    - List of quantum-espresso libraries
+#  QE_EXT_LIBS     - external libraries linked to QE,
+#                    as specified in BLAS_LIBS/LAPACK_LIBS/SCALAPACK_LIBS in make.inc
 #  QE_FOUND        - True if quantum-espresso found.
 #
 
@@ -59,6 +61,18 @@ list(APPEND QE_LIBRARIES ${QE_FOX_LIB_DOM} ${QE_FOX_LIB_UTILS} ${QE_FOX_LIB_WCML
 list(APPEND QE_LIBRARIES ${QE_KS_LIB_CG} ${QE_KS_LIB_DAVID} ${QE_KS_LIBRARY})
 list(APPEND QE_LIBRARIES ${QE_D3_LIBRARY} ${QE_LA_LIBRARY} ${QE_UTIL_LIBRARY} ${QE_CLIB_LIBRARY} ${MPI_Fortran_LIBRARIES})
 set(QE_INCLUDE_DIRS ${QE_COUPLE_DIR} ${QE_MOD_DIR} ${QE_PW_DIR} ${QE_FFT_DIR} ${QE_LAX_DIR} ${QE_CLIB_DIR} ${QE_IOTK_DIR} ${QE_UTIL_DIR} ${QE_MOD_DIR})
+
+find_file(QE_CONFIG "make.inc" PATHS ${QE_COUPLE_DIR}/../.. NO_DEFAULT_PATH)
+file(STRINGS ${QE_CONFIG} QE_BLAS_LINE REGEX "^[ \t]*BLAS_LIBS[ \t]*=")
+string(REGEX REPLACE "^[ \t]*BLAS_LIBS[ \t]*=" " " QE_BLAS_LIBS ${QE_BLAS_LINE})
+separate_arguments(QE_BLAS_LIBS)
+file(STRINGS ${QE_CONFIG} QE_LAPACK_LINE REGEX "^[ \t]*LAPACK_LIBS[ \t]*=")
+string(REGEX REPLACE "^[ \t]*LAPACK_LIBS[ \t]*=" " " QE_LAPACK_LIBS ${QE_LAPACK_LINE})
+separate_arguments(QE_LAPACK_LIBS)
+file(STRINGS ${QE_CONFIG} QE_SCALAPACK_LINE REGEX "^[ \t]*SCALAPACK_LIBS[ \t]*=")
+string(REGEX REPLACE "^[ \t]*SCALAPACK_LIBS[ \t]*=" " " QE_SCALAPACK_LIBS ${QE_SCALAPACK_LINE})
+separate_arguments(QE_SCALAPACK_LIBS)
+set(QE_EXT_LIBS ${QE_SCALAPACK_LIBS} ${QE_LAPACK_LIBS} ${QE_BLAS_LIBS})
 
 include(FindPackageHandleStandardArgs)
 # handle the QUIETLY and REQUIRED arguments and set QE_FOUND to TRUE
