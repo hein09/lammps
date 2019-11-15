@@ -58,12 +58,17 @@ class FixONIOM : public Fix {
   int    verbose{0};            // print level (<= 0 means no output)
   enum {PLUS=0x0, MINUS=0x1};
   struct conn_t{
-    int mode{-1};
-    int mc_group{-1};
-    int mc_nat{-1};
-    MPI_Comm comm{MPI_COMM_NULL};
-    std::vector<tagint> tags{};
-    std::map<tagint,int> hash{};
+    conn_t(int mode=-1, int mc_group=-1, int mc_nat=-1, MPI_Comm comm=MPI_COMM_NULL,
+           const std::vector<tagint>& tags={}, const std::map<tagint, int>& hash={})
+        : mode{mode}, mc_group{mc_group}, mc_nat{mc_nat}, comm{comm},
+          tags{tags}, hash{hash}
+    {}
+    int mode;
+    int mc_group;
+    int mc_nat;
+    MPI_Comm comm;
+    std::vector<tagint> tags;
+    std::map<tagint,int> hash;
   };
   std::vector<conn_t> connections{};
 

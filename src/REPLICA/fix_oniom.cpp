@@ -114,16 +114,16 @@ FixONIOM::FixONIOM(LAMMPS *lmp, int narg, char **arg) :
         };
         int lowmode = FixONIOM::MINUS;
         int highmode = FixONIOM::PLUS;
-        connections.push_back({lowmode, mc_group, mc_nat});
+        connections.emplace_back(lowmode, mc_group, mc_nat);
         setupMPI(low, connections.back().comm);
-        connections.push_back({highmode, mc_group, mc_nat});
+        connections.emplace_back(highmode, mc_group, mc_nat);
         setupMPI(high, connections.back().comm);
       }else if((iworld == (low)) || (iworld == (high))){
         // slave partitions
         if(!connections.empty()){
           error->universe_one(FLERR, "Same partition used in multiple oniom regions");
         }
-        connections.push_back({0, mc_group, mc_nat});
+        connections.emplace_back(0, mc_group, mc_nat);
         int me, flag{0}, tag;
         MPI_Request req;
         MPI_Comm_rank(world, &me);
