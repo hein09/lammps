@@ -14,39 +14,55 @@ MODULE fix_pw
 
   IMPLICIT NONE
 
-  INTEGER (kind=C_LONG) :: nec=0
+  INTEGER (kind=C_LONG) :: nec = 0
+  REAL(DP), DIMENSION(3) :: com0 = (/ 0, 0, 0 /)
 
   CONTAINS
 
     PURE FUNCTION energy_pw() BIND(C)
-        USE ener, ONLY: etot
-        IMPLICIT NONE
-        REAL(kind=C_DOUBLE) :: energy_pw
-        energy_pw = etot
-        RETURN
+      USE ener,      ONLY: etot
+      USE constants, ONLY: rytoev
+      IMPLICIT NONE
+      REAL(kind=C_DOUBLE) :: energy_pw
+      energy_pw = etot * rytoev
+      RETURN
     END FUNCTION
 
-    SUBROUTINE start_pw(comm, nimage, npool, ntask, nband, ndiag, infile, outfile, c_nec, c_nat) BIND(C)
+    SUBROUTINE start_pw(comm, partitions, infile, outfile, c_nat, pos_qm, c_nec) BIND(C)
       USE command_line_options, ONLY: set_command_line
+      USE ions_base,            ONLY: tau
+      USE cell_base,            ONLY: alat, at
+      USE control_flags,        ONLY: gamma_only
+      USE constants,            ONLY: bohr_radius_angs
       USE mp_global,            ONLY: mp_startup
       USE environment,          ONLY: environment_start
       USE read_input,           ONLY: read_input_file
       USE check_stop,           ONLY: check_stop_init
       USE input_parameters,     ONLY: outdir, calculation, ion_dynamics
-      USE mp_pools,          ONLY : intra_pool_comm
-      USE mp_bands,          ONLY : intra_bgrp_comm, inter_bgrp_comm
+      USE mp,                   ONLY: mp_bcast
+      USE mp_pools,             ONLY: intra_pool_comm
+      USE mp_bands,             ONLY: intra_bgrp_comm, inter_bgrp_comm
+      USE mp_diag,              ONLY: mp_start_diag
       USE parallel_include
       IMPLICIT NONE
       !
+      ! MPI arguments
       INTEGER, VALUE :: comm
-      INTEGER (kind=C_INT), INTENT(IN), VALUE :: nimage, npool, ntask, nband, ndiag
-      INTEGER :: comm_, nimage_, npool_, ntask_, nband_, ndiag_
-      INTEGER (kind=C_INT), INTENT(OUT) :: c_nat
-      INTEGER (kind=C_LONG), INTENT(IN), VALUE :: c_nec
+      INTEGER (kind=C_INT), DIMENSION(4) :: partitions
+      INTEGER :: comm_, npool_, ntask_, nband_, ndiag_
+      ! Filenames
       CHARACTER (kind=C_CHAR), INTENT(IN) :: infile(*), outfile(*)
+      ! QM atoms
+      INTEGER (kind=C_INT), INTENT(INOUT) :: c_nat
+      REAL(kind=c_double), INTENT(IN) :: pos_qm(3, c_nat)
+      ! Number of EC atoms
+      INTEGER (kind=C_LONG), INTENT(IN), VALUE :: c_nec
+      ! local variables
       CHARACTER(LEN=80) :: infile_, outfile_
       INTEGER :: i
       LOGICAL, SAVE :: first_time=.true.
+      REAL(DP), DIMENSION(3) :: com
+      REAL(DP), DIMENSION(3) :: coc
       !
       ! ... Copying a string from C to Fortran is a bit ugly.
       infile_ = ' '
@@ -73,12 +89,15 @@ MODULE fix_pw
         utilout = 55
       END IF
       !
-      ! regular initialization
-      nimage_ = nimage; npool_ = npool; ntask_ = ntask; nband_ = nband; ndiag_ = ndiag
-      CALL set_command_line(nimage=nimage_, npool=npool_, ntg=ntask_, nband=nband_, ndiag=ndiag_)
+      ! mpi initialization
+      npool_ = partitions(1); ntask_ = partitions(2)
+      nband_ = partitions(3); ndiag_ = partitions(4)
+      CALL set_command_line(npool=npool_, ntg=ntask_, nband=nband_, ndiag=ndiag_)
       comm_ = comm
-      CALL mp_startup(my_world_comm=comm_)
+      CALL mp_startup(my_world_comm=comm_, start_images=.true.)
+!      CALL mp_start_diag(ndiag_, comm_, intra_pool_comm, do_distr_diag_inside_bgrp_=.true.)
       CALL set_mpi_comm_4_solvers( intra_pool_comm, intra_bgrp_comm, inter_bgrp_comm )
+      ! read input file
       CALL environment_start('PWSCF')
       CALL read_input_file('PW', infile_)
       ! overwrite some settings
@@ -90,24 +109,40 @@ MODULE fix_pw
       outdir = outfile_(5:)
       ! continue initialization
       CALL iosys()
-      CALL plugin_initialization()
+      if ( gamma_only ) write(stdout, *) "gamma-point specific algorithms are used"
     ! TODO: can we use the stop-mechanism somehow?
       CALL check_stop_init()
+      ! Check if input contains suitable number of atoms
+      IF (c_nat /= nat) THEN
+        ! send back mismatching nat to calling code
+        c_nat = nat
+        ! early return, not recoverable
+        RETURN
+      END IF
+      ! initialize positions from lammps
+      IF (ionode) THEN
+        ! center of cell
+        coc = MATMUL(at, (/0.5d0, 0.5d0, 0.5d0/))
+        ! center of molecule
+        com = SUM(pos_qm, dim=2) / (nat * alat * bohr_radius_angs)
+        DO i = 1, nat
+            tau(:, i) = pos_qm(:, i) / (alat * bohr_radius_angs) + coc - com
+        END DO
+      END IF
+      CALL mp_bcast(tau, ionode_id, comm_)
+      ! finalize initialization
       CALL setup()
       CALL init_run()
-    ! TODO: send positions a first time?
-    !
-      ! mark as executed
-      first_time = .false.
-      ! send back nat to calling code
-      c_nat = nat
       ! save number of EC atoms
       nec = c_nec
+      ! mark as executed
+      first_time = .false.
     END SUBROUTINE start_pw
 
     SUBROUTINE calc_pw(f_qm, f_ec) BIND(C)
       USE extrapolation, ONLY: update_file
       USE force_mod,     ONLY: force
+      USE constants,     ONLY: rytoev, bohr_radius_angs
       IMPLICIT NONE
       REAL(kind=c_double), INTENT(OUT) :: f_qm(3, nat)
       REAL(kind=c_double), INTENT(OUT) :: f_ec(3, nec)
@@ -118,7 +153,9 @@ MODULE fix_pw
       ! print coordinates in expected place
       CALL output_tau(.false., .false.)
       ! exchange forces
-      f_qm = force
+      f_qm = force * rytoev / bohr_radius_angs
+      ! TODO: implement forces on ec atoms
+      f_ec = 0
       ! make sure extrapolation works
       CALL update_file()
     END SUBROUTINE calc_pw
@@ -141,7 +178,7 @@ MODULE fix_pw
         ! center of cell
         coc = MATMUL(at, (/0.5d0, 0.5d0, 0.5d0/))
         ! center of molecule
-        com = SUM(pos_qm, dim=2) / nat
+        com = SUM(pos_qm, dim=2) / (nat * alat * bohr_radius_angs)
         DO i = 1, nat
             tau(:, i) = pos_qm(:, i) / (alat * bohr_radius_angs) + coc - com
         END DO

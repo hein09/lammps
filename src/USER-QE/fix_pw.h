@@ -43,7 +43,6 @@ class FixPW : public Fix {
 //  double memory_usage() override;
  protected:
   int ec_group{-1}; // id of electrostatic coupling group
-  int npool{1}, ntask{1}, nband{1}, ndiag{1}; // PWScf partition flags
   bigint nqm{};    // number of QM atoms
   bigint nec{};    // number of EC atoms
   double fscale{}; // scale factor for forces
@@ -55,6 +54,9 @@ class FixPW : public Fix {
   std::vector<tagint> ec_tags;
   std::map<tagint, int> qm_hash; // assign tags to their qm-id
   std::map<tagint, int> ec_hash;
+  void collect_tags(int mask, bigint nat,
+                    std::vector<tagint>& tags,
+                    std::map<tagint, int>& hash);
 
   // link atoms
   struct linkgroup{
@@ -68,6 +70,7 @@ class FixPW : public Fix {
   enum class charge_t{Z1, Z2, Z3, RCD, CS};
   charge_t charge_scheme{charge_t::Z1};
   std::vector<std::pair<tagint, tagint>> chargeatoms; // tags of atoms with modified charges
+  std::vector<tagint> get_bound_neighbors(tagint tag, int mask, int dist=0);
 
   // communication
   struct commdata_t{
@@ -79,6 +82,8 @@ class FixPW : public Fix {
   double** ec_buf{nullptr}; // buffer for communicating ec-atoms to pscf
   int *recv_count_buf; // buffer for variable-size collectives
   int *displs_buf;
+  void collect_positions(bigint nat, double** buffer);
+  void distribute_forces(bigint nat, double** buffer);
 };
 
 }

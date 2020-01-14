@@ -34,9 +34,10 @@ using namespace LAMMPS_NS;
 using namespace FixConst;
 
 extern "C" {
-void start_pw(MPI_Fint comm, int nimage, int npool, int ntaskgroup, int nband, int ndiag,
-              const char *input_file, const char *output_file, bigint nec,
-              int* nat);
+void start_pw(MPI_Fint comm, int partitions[4],
+              const char *input_file, const char *output_file,
+              int* nat, double *x_qm,
+              bigint nec);
 void update_pw(double *x_qm, double *x_ec);
 void calc_pw(double *f_qm, double *f_ec);
 void end_pw(int *exit_status);
@@ -57,12 +58,14 @@ FixPW::FixPW(LAMMPS *l, int narg, char **arg):
   if (modify->find_fix_by_style("qe/pw") != -1)
     error->all(FLERR, "Only one instance of fix qe/pw allowed at a time");
 
-  // make sure we understand eachother
+  // forces are returned as ev/angstrom, convert accordingly
   // NOTE: other formats also need additional scaling for positions
   if (strcmp(update->unit_style, "metal") == 0){
-    fscale = 1.0/23.0609;
-  }else if (strcmp(update->unit_style, "real") == 0){
+    // need eV / Angstrom
     fscale = 1.0;
+  }else if (strcmp(update->unit_style, "real") == 0){
+    // need kcal/mol / Angstrom
+    fscale = 23.060549;
   }else error->all(FLERR, "fix qe/pw requires real or metal units");
 
   // save file-name for later
@@ -70,18 +73,19 @@ FixPW::FixPW(LAMMPS *l, int narg, char **arg):
 
   // parse additional arguments
   int iarg = 4;
+  int partitions[4]{1,1,1,1}; // mpi levels (npool, ntask, nband, ndiag)
   while(iarg < narg-1){
     if(strcmp(arg[iarg], "npool") == 0){
-      npool = force->inumeric(FLERR, arg[iarg+1]);
+      partitions[0] = force->inumeric(FLERR, arg[iarg+1]);
       iarg += 2;
     }else if(strcmp(arg[iarg], "ntask") == 0){
-      ntask = force->inumeric(FLERR, arg[iarg+1]);
+      partitions[1] = force->inumeric(FLERR, arg[iarg+1]);
       iarg += 2;
     }else if(strcmp(arg[iarg], "nband") == 0){
-      nband = force->inumeric(FLERR, arg[iarg+1]);
+      partitions[2] = force->inumeric(FLERR, arg[iarg+1]);
       iarg += 2;
     }else if(strcmp(arg[iarg], "ndiag") == 0){
-      ndiag = force->inumeric(FLERR, arg[iarg+1]);
+      partitions[3] = force->inumeric(FLERR, arg[iarg+1]);
       iarg += 2;
     }else if(strcmp(arg[iarg], "ec") == 0){
       ec_group = group->find(arg[iarg+1]);
@@ -129,36 +133,6 @@ FixPW::FixPW(LAMMPS *l, int narg, char **arg):
     }
   }
 
-  // collect atoms bound to ID on proc 0
-  auto get_bound_neighbors = [this](tagint tag, int mask, int dist=0){
-    int idx = atom->map(tag);
-    std::vector<tagint> list;
-    if(idx != -1){
-      // collect bound neighbors in requested group
-      const auto* const neighbors = atom->special[idx];
-      for(int i=0; i<atom->nspecial[idx][dist]; ++i){
-        if(atom->map(neighbors[i]) == -1){
-          error->one(FLERR, "Bound neighbor not a local or ghost atom");
-        }
-        if(atom->mask[atom->map(neighbors[i])] & mask){
-          list.push_back(neighbors[i]);
-        }
-      }
-      // if tagged atom is on another process, transfer it to proc 0
-      if(comm->me != 0){
-        auto s = static_cast<int>(list.size());
-        MPI_Send(&s, 1, MPI_INT, 0, tag, world);
-        MPI_Send(list.data(), s, MPI_LMP_TAGINT, 0, tag, world);
-      }
-    }else if((comm->me == 0) && (idx == -1)){
-      // if tagged atom is on another process, transfer it to proc 0
-      int s{};
-      MPI_Recv(&s, 1, MPI_INT, MPI_ANY_SOURCE, tag, world, MPI_STATUS_IGNORE);
-      list.resize(s);
-      MPI_Recv(list.data(), s, MPI_LMP_TAGINT, MPI_ANY_SOURCE, tag, world, MPI_STATUS_IGNORE);
-    }
-    return list;
-  };
   // check link and modified-charge atoms
   if (!linkatoms.empty()) {
     if(!(atom->molecular)){
@@ -239,6 +213,12 @@ FixPW::FixPW(LAMMPS *l, int narg, char **arg):
     out_file += '.' + std::to_string(universe->iworld);
   }
 
+  // get number of qm atoms
+  nqm = group->count(igroup);
+  if(nqm > MAXSMALLINT){
+    error->all(FLERR, "Too many QM atoms for fix qe/pw.");
+  }
+
   // calculate number of EC atoms
   if(ec_group >= 0){
     nec = group->count(ec_group);
@@ -269,66 +249,36 @@ FixPW::FixPW(LAMMPS *l, int narg, char **arg):
     memory->grow(ec_buf, 1, 3, "pw/qe:ec_buf");
   }
 
-  // initialize PWScf, compare number of qm-atoms
-  int nat{0};
-  nqm = group->count(igroup);
-  if(nqm > MAXSMALLINT){
-    error->all(FLERR, "Too many QM atoms for fix qe/pw.");
+  // init comm-buffers
+  recv_count_buf = new int[universe->nprocs];
+  displs_buf = new int[universe->nprocs];
+  // collect and save tags of main group
+  collect_tags(groupbit, nqm, qm_tags, qm_hash);
+  if(ec_group >= 0){
+    const auto ecmask = group->bitmask[ec_group];
+    collect_tags(ecmask, nec, ec_tags, ec_hash);
   }
 
-  start_pw(MPI_Comm_c2f(world), 1, npool, ntask, nband, ndiag,
-           inp_file.data(), out_file.data(), nec, &nat);
+  // initially collect coordinates so PW will be initialized from MD instead of File
+  auto nat = static_cast<int>(nqm);
+  memory->grow(qm_buf, static_cast<int>(nqm), 3, "pw/qe:qm_buf");
+  collect_positions(nqm, qm_buf);
 
+  // Boot up PWScf
+  start_pw(MPI_Comm_c2f(world), partitions,
+           inp_file.data(), out_file.data(),
+           &nat, qm_buf[0],
+           nec);
+
+  // check if pw has been launched succesfully and with compatible input
   /* NOTE: using one, not sure if a stray pwscf process may run off.
    * may be if pw had been compiled against a different MPI version.
    * if so, may be resolved if building pw is done via lammps' buildsystem.
    */
   if (nat<0){
     error->one(FLERR, "Error opening output file for fix qe/pw.");
-  }else if( nat != nqm){
+  }else if(nat != nqm){
     error->one(FLERR, "Mismatching number of atoms in fix qe/pw.");
-  }
-
-
-  // init comm-buffers
-  recv_count_buf = new int[universe->nprocs];
-  displs_buf = new int[universe->nprocs];
-  // check if pw has been launched succesfully and with compatible input
-  auto collect_tags = [this](int mask, bigint nat, std::vector<tagint>& tags, std::map<tagint, int>& hash){
-    // collect process-local tags
-    std::vector<tagint> tmp{};
-    tmp.reserve(static_cast<size_t>(nat));
-    for(int i=0; i<atom->nlocal; ++i){
-      if(atom->mask[i] & mask)
-        tmp.push_back(atom->tag[i]);
-    }
-
-    // gather number of tags
-    int send_count = tmp.size() * sizeof(decltype (tmp)::value_type);
-    MPI_Allgather(&send_count, 1, MPI_INT, recv_count_buf, 1, MPI_INT, world);
-
-    // construct displacement
-    displs_buf[0] = 0;
-    for(int i=1; i<universe->nprocs; ++i){
-      displs_buf[i] = displs_buf[i-1]+recv_count_buf[i-1];
-    }
-
-    // gather and sort tags
-    tags.resize(static_cast<size_t>(nat));
-    MPI_Allgatherv(tmp.data(), send_count, MPI_BYTE,
-                   tags.data(), recv_count_buf, displs_buf, MPI_BYTE, world);
-    std::sort(tags.begin(), tags.end());
-
-    // assign tags to qm-id
-    for(int i=0; i<nqm; ++i){
-      hash[tags[i]] = i;
-    }
-  };
-  // collect and save tags of main group
-  collect_tags(groupbit, nqm, qm_tags, qm_hash);
-  if(ec_group >= 0){
-    const auto ecmask = group->bitmask[ec_group];
-    collect_tags(ecmask, nec, ec_tags, ec_hash);
   }
 }
 
@@ -357,8 +307,6 @@ double FixPW::compute_scalar()
   return energy_pw();
 }
 
-// TODO: collective communications may be optimized (away?)
-
 void FixPW::min_post_force(int i)
 {
   post_force(i);
@@ -380,31 +328,8 @@ void FixPW::post_force(int)
     forceL[2] *= l.ratio;
   }
   // distribute forces across lammps processes
-  auto distribute_forces = [this](bigint nat, double** buffer){
-    // sync buffer
-    comm_buf.resize(static_cast<size_t>(nat));
-    if(comm->me == 0){
-      for(int i=0; i<nat; ++i){
-        comm_buf[i] = {i, buffer[i][0],
-                       buffer[i][1], buffer[i][2]};
-      }
-    }
-    MPI_Bcast(comm_buf.data(), nat*sizeof(decltype(comm_buf)::value_type), MPI_BYTE, 0, world);
-    // add forces to local atoms
-    const tagint * const tag = atom->tag;
-    double ** f = atom->f;
-    for(int i=0; i<atom->nlocal; ++i){
-      for(auto& dat: comm_buf){
-        if(tag[i] == dat.tag){
-          f[i][0] += dat.x*fscale;
-          f[i][1] += dat.y*fscale;
-          f[i][2] += dat.z*fscale;
-        }
-      }
-    }
-  };
   distribute_forces(nqm, qm_buf);
-//  if(ec_group >= 0) distribute_forces(nec, ec_buf);
+  if(ec_group >= 0) distribute_forces(nec, ec_buf);
 }
 
 void FixPW::min_pre_force(int)
@@ -415,38 +340,6 @@ void FixPW::min_pre_force(int)
 void FixPW::post_integrate()
 {
   // collect positions of lammps processes on proc 0
-  auto collect_positions = [this](bigint nat, double** buffer){
-    const int *const mask = atom->mask;
-    const tagint * const tag = atom->tag;
-    const double * const * const x = atom->x;
-    // collect local atom positions
-    decltype(comm_buf) tmp;
-    tmp.reserve(static_cast<size_t>(nat));
-    for(int i=0; i<atom->nlocal; ++i){
-      if(mask[i] & groupbit){
-        tmp.push_back({qm_hash.at(tag[i]), x[i][0], x[i][1], x[i][2]});
-      }
-    }
-    // collect each proc's number of atoms
-    int send_count = tmp.size() * sizeof(decltype (tmp)::value_type);
-    MPI_Allgather(&send_count, 1, MPI_INT, recv_count_buf, 1, MPI_INT, world);
-    // construct displacement
-    displs_buf[0] = 0;
-    for(int i=1; i<universe->nprocs; ++i){
-      displs_buf[i] = displs_buf[i-1]+recv_count_buf[i-1];
-    }
-    // collect position
-    comm_buf.resize(static_cast<size_t>(nat));
-    MPI_Allgatherv(tmp.data(), send_count, MPI_BYTE,
-                   comm_buf.data(), recv_count_buf, displs_buf, MPI_BYTE, world);
-
-    // extract data to contiguous memory
-    for(auto& dat: comm_buf){
-      buffer[dat.tag][0] = dat.x;
-      buffer[dat.tag][1] = dat.y;
-      buffer[dat.tag][2] = dat.z;
-    }
-  };
   memory->grow(qm_buf, static_cast<int>(nqm), 3, "pw/qe:qm_buf");
   collect_positions(nqm, qm_buf);
   if(ec_group >= 0){
@@ -465,4 +358,128 @@ void FixPW::post_integrate()
 
   // transmit to PWScf
   update_pw(qm_buf[0], ec_buf[0]);
+}
+
+void FixPW::distribute_forces(bigint nat, double** buffer)
+{
+  // sync buffer
+  comm_buf.resize(static_cast<size_t>(nat));
+  if(comm->me == 0){
+    for(int i=0; i<nat; ++i){
+      comm_buf[i] = {i, buffer[i][0],
+                     buffer[i][1], buffer[i][2]};
+    }
+  }
+  MPI_Bcast(comm_buf.data(), nat*sizeof(decltype(comm_buf)::value_type), MPI_BYTE, 0, world);
+  // add forces to local atoms
+  const tagint * const tag = atom->tag;
+  double ** f = atom->f;
+  for(int i=0; i<atom->nlocal; ++i){
+    for(auto& dat: comm_buf){
+      if(tag[i] == dat.tag){
+        f[i][0] += dat.x*fscale;
+        f[i][1] += dat.y*fscale;
+        f[i][2] += dat.z*fscale;
+      }
+    }
+  }
+}
+
+void FixPW::collect_positions(bigint nat, double **buffer)
+{
+  const int *const mask = atom->mask;
+  const tagint * const tag = atom->tag;
+  const double * const * const x = atom->x;
+  // collect local atom positions
+  decltype(comm_buf) tmp;
+  tmp.reserve(static_cast<size_t>(nat));
+  for(int i=0; i<atom->nlocal; ++i){
+    if(mask[i] & groupbit){
+      tmp.push_back({qm_hash.at(tag[i]), x[i][0], x[i][1], x[i][2]});
+    }
+  }
+  // collect each proc's number of atoms
+  int send_count = tmp.size() * sizeof(decltype (tmp)::value_type);
+  MPI_Allgather(&send_count, 1, MPI_INT, recv_count_buf, 1, MPI_INT, world);
+  // construct displacement
+  displs_buf[0] = 0;
+  for(int i=1; i<universe->nprocs; ++i){
+    displs_buf[i] = displs_buf[i-1]+recv_count_buf[i-1];
+  }
+  // collect position
+  comm_buf.resize(static_cast<size_t>(nat));
+  MPI_Allgatherv(tmp.data(), send_count, MPI_BYTE,
+                 comm_buf.data(), recv_count_buf, displs_buf, MPI_BYTE, world);
+
+  // extract data to contiguous memory
+  for(auto& dat: comm_buf){
+    buffer[dat.tag][0] = dat.x;
+    buffer[dat.tag][1] = dat.y;
+    buffer[dat.tag][2] = dat.z;
+  }
+}
+
+void FixPW::collect_tags(int mask, bigint nat,
+                         std::vector<tagint> &tags,
+                         std::map<tagint, int> &hash)
+{
+  // collect process-local tags
+  std::vector<tagint> tmp{};
+  tmp.reserve(static_cast<size_t>(nat));
+  for(int i=0; i<atom->nlocal; ++i){
+    if(atom->mask[i] & mask)
+      tmp.push_back(atom->tag[i]);
+  }
+
+  // gather number of tags
+  int send_count = tmp.size() * sizeof(decltype (tmp)::value_type);
+  MPI_Allgather(&send_count, 1, MPI_INT, recv_count_buf, 1, MPI_INT, world);
+
+  // construct displacement
+  displs_buf[0] = 0;
+  for(int i=1; i<universe->nprocs; ++i){
+    displs_buf[i] = displs_buf[i-1]+recv_count_buf[i-1];
+  }
+
+  // gather and sort tags
+  tags.resize(static_cast<size_t>(nat));
+  MPI_Allgatherv(tmp.data(), send_count, MPI_BYTE,
+                 tags.data(), recv_count_buf, displs_buf, MPI_BYTE, world);
+  std::sort(tags.begin(), tags.end());
+
+  // assign tags to qm-id
+  for(int i=0; i<nqm; ++i){
+    hash[tags[i]] = i;
+  }
+}
+
+std::vector<tagint> FixPW::get_bound_neighbors(tagint tag, int mask, int dist)
+{
+  int idx = atom->map(tag);
+  std::vector<tagint> list;
+  if(idx != -1){
+    // collect bound neighbors in requested group
+    const auto* const neighbors = atom->special[idx];
+    for(int i=0; i<atom->nspecial[idx][dist]; ++i){
+      if(atom->map(neighbors[i]) == -1){
+        error->one(FLERR, "Bound neighbor not a local or ghost atom");
+      }
+      if(atom->mask[atom->map(neighbors[i])] & mask){
+        list.push_back(neighbors[i]);
+      }
+    }
+    // if tagged atom is on another process, transfer it to proc 0
+    if(comm->me != 0){
+      auto s = static_cast<int>(list.size());
+      MPI_Send(&s, 1, MPI_INT, 0, tag, world);
+      MPI_Send(list.data(), s, MPI_LMP_TAGINT, 0, tag, world);
+    }
+  }else if((comm->me == 0) && (idx == -1)){
+    // if tagged atom is on another process, transfer it to proc 0
+    int s{};
+    MPI_Recv(&s, 1, MPI_INT, MPI_ANY_SOURCE, tag, world, MPI_STATUS_IGNORE);
+    list.resize(s);
+    MPI_Recv(list.data(), s, MPI_LMP_TAGINT, MPI_ANY_SOURCE, tag, world, MPI_STATUS_IGNORE);
+  }
+  return list;
 }
