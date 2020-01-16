@@ -32,20 +32,24 @@ class FixPW : public Fix {
   FixPW(class LAMMPS *, int, char **);
   virtual ~FixPW() override;
   int setmask() override;
-  // sending positions
+  // send new positions
   void post_integrate() override;
   void min_pre_force(int) override;
-  // receiving forces
+  // trigger calculation, receive forces
   void post_force(int) override;
   void min_post_force(int) override;
+  void setup(int) override;
+  void min_setup(int) override;
   // report internals
   double compute_scalar() override;
 //  double memory_usage() override;
  protected:
+  static bool initialized; // only one instance can run at a time
+
   int ec_group{-1}; // id of electrostatic coupling group
   bigint nqm{};    // number of QM atoms
   bigint nec{};    // number of EC atoms
-  double fscale{}; // scale factor for forces
+  double escale{}, fscale{}; // scale factor for energies and forces
   std::string inp_file; // PWScf input file name
   std::string out_file; // PWScf output file name
 
@@ -82,8 +86,8 @@ class FixPW : public Fix {
   double** ec_buf{nullptr}; // buffer for communicating ec-atoms to pscf
   int *recv_count_buf; // buffer for variable-size collectives
   int *displs_buf;
-  void collect_positions(bigint nat, double** buffer);
-  void distribute_forces(bigint nat, double** buffer);
+  void collect_positions(bigint nat, double** buffer, const std::map<tagint, int>& hash);
+  void distribute_forces(bigint nat, double** buffer, const std::vector<tagint>& tags);
 };
 
 }

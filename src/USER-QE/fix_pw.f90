@@ -95,7 +95,7 @@ MODULE fix_pw
       CALL set_command_line(npool=npool_, ntg=ntask_, nband=nband_, ndiag=ndiag_)
       comm_ = comm
       CALL mp_startup(my_world_comm=comm_, start_images=.true.)
-!      CALL mp_start_diag(ndiag_, comm_, intra_pool_comm, do_distr_diag_inside_bgrp_=.true.)
+      CALL mp_start_diag(ndiag_, comm_, intra_bgrp_comm, do_distr_diag_inside_bgrp_=.true.)
       CALL set_mpi_comm_4_solvers( intra_pool_comm, intra_bgrp_comm, inter_bgrp_comm )
       ! read input file
       CALL environment_start('PWSCF')

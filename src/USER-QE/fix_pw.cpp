@@ -46,6 +46,8 @@ double energy_pw(void);
 
 /* ---------------------------------------------------------------------- */
 
+bool FixPW::initialized = false;
+
 FixPW::FixPW(LAMMPS *l, int narg, char **arg):
     Fix{l, narg, arg}
 {
@@ -55,17 +57,23 @@ FixPW::FixPW(LAMMPS *l, int narg, char **arg):
     error->all(FLERR,"fix qe/pw requires atom IDs");
 
   // ensure that only one fix is active per partition
-  if (modify->find_fix_by_style("qe/pw") != -1)
+  if (initialized)
     error->all(FLERR, "Only one instance of fix qe/pw allowed at a time");
 
-  // forces are returned as ev/angstrom, convert accordingly
-  // NOTE: other formats also need additional scaling for positions
+  // this fix contributes to the systems energy
+  thermo_energy = 1;
+
+  /* convert energies and forces
+   * energy is returned as eV
+   * forces are returned as eV/Angstrom
+   * NOTE: other formats also need additional scaling for positions
+   */
   if (strcmp(update->unit_style, "metal") == 0){
-    // need eV / Angstrom
-    fscale = 1.0;
+    // need eV and eV / Angstrom
+    escale = fscale = 1.0;
   }else if (strcmp(update->unit_style, "real") == 0){
-    // need kcal/mol / Angstrom
-    fscale = 23.060549;
+    // need kcal/mol and kcal/mol / Angstrom
+    escale = fscale = 23.060549;
   }else error->all(FLERR, "fix qe/pw requires real or metal units");
 
   // save file-name for later
@@ -262,13 +270,14 @@ FixPW::FixPW(LAMMPS *l, int narg, char **arg):
   // initially collect coordinates so PW will be initialized from MD instead of File
   auto nat = static_cast<int>(nqm);
   memory->grow(qm_buf, static_cast<int>(nqm), 3, "pw/qe:qm_buf");
-  collect_positions(nqm, qm_buf);
+  collect_positions(nqm, qm_buf, qm_hash);
 
   // Boot up PWScf
   start_pw(MPI_Comm_c2f(world), partitions,
            inp_file.data(), out_file.data(),
            &nat, qm_buf[0],
            nec);
+  initialized = true;
 
   // check if pw has been launched succesfully and with compatible input
   /* NOTE: using one, not sure if a stray pwscf process may run off.
@@ -285,7 +294,10 @@ FixPW::FixPW(LAMMPS *l, int narg, char **arg):
 FixPW::~FixPW()
 {
   int result;
-  end_pw(&result);
+  if(initialized){
+      end_pw(&result);
+      initialized = false;
+  }
 
   delete [] recv_count_buf;
   memory->destroy(qm_buf);
@@ -304,7 +316,17 @@ int FixPW::setmask()
 
 double FixPW::compute_scalar()
 {
-  return energy_pw();
+  return energy_pw() * escale;
+}
+
+void FixPW::setup(int i)
+{
+    post_force(i);
+}
+
+void FixPW::min_setup(int i)
+{
+    post_force(i);
 }
 
 void FixPW::min_post_force(int i)
@@ -328,8 +350,8 @@ void FixPW::post_force(int)
     forceL[2] *= l.ratio;
   }
   // distribute forces across lammps processes
-  distribute_forces(nqm, qm_buf);
-  if(ec_group >= 0) distribute_forces(nec, ec_buf);
+  distribute_forces(nqm, qm_buf, qm_tags);
+  if(ec_group >= 0) distribute_forces(nec, ec_buf, ec_tags);
 }
 
 void FixPW::min_pre_force(int)
@@ -341,10 +363,10 @@ void FixPW::post_integrate()
 {
   // collect positions of lammps processes on proc 0
   memory->grow(qm_buf, static_cast<int>(nqm), 3, "pw/qe:qm_buf");
-  collect_positions(nqm, qm_buf);
+  collect_positions(nqm, qm_buf, qm_hash);
   if(ec_group >= 0){
     memory->grow(ec_buf, static_cast<int>(nec), 3, "pw/qe:ec_buf");
-    collect_positions(nec, ec_buf);
+    collect_positions(nec, ec_buf, ec_hash);
   }
 
   // modify positions of link atoms
@@ -360,13 +382,13 @@ void FixPW::post_integrate()
   update_pw(qm_buf[0], ec_buf[0]);
 }
 
-void FixPW::distribute_forces(bigint nat, double** buffer)
+void FixPW::distribute_forces(bigint nat, double** buffer, const std::vector<tagint>& tags)
 {
   // sync buffer
   comm_buf.resize(static_cast<size_t>(nat));
   if(comm->me == 0){
     for(int i=0; i<nat; ++i){
-      comm_buf[i] = {i, buffer[i][0],
+      comm_buf[i] = {tags[i], buffer[i][0],
                      buffer[i][1], buffer[i][2]};
     }
   }
@@ -385,7 +407,7 @@ void FixPW::distribute_forces(bigint nat, double** buffer)
   }
 }
 
-void FixPW::collect_positions(bigint nat, double **buffer)
+void FixPW::collect_positions(bigint nat, double **buffer, const std::map<tagint, int>& hash)
 {
   const int *const mask = atom->mask;
   const tagint * const tag = atom->tag;
@@ -395,7 +417,7 @@ void FixPW::collect_positions(bigint nat, double **buffer)
   tmp.reserve(static_cast<size_t>(nat));
   for(int i=0; i<atom->nlocal; ++i){
     if(mask[i] & groupbit){
-      tmp.push_back({qm_hash.at(tag[i]), x[i][0], x[i][1], x[i][2]});
+      tmp.push_back({hash.at(tag[i]), x[i][0], x[i][1], x[i][2]});
     }
   }
   // collect each proc's number of atoms
@@ -448,7 +470,7 @@ void FixPW::collect_tags(int mask, bigint nat,
   std::sort(tags.begin(), tags.end());
 
   // assign tags to qm-id
-  for(int i=0; i<nqm; ++i){
+  for(int i=0; i<nat; ++i){
     hash[tags[i]] = i;
   }
 }
