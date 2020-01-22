@@ -15,7 +15,7 @@
    Contributing author: Sebastian Gsänger (FAU)
 ------------------------------------------------------------------------- */
 
-#include "fix_pw.h"
+#include "fix_cp.h"
 
 #include "error.h"
 
@@ -23,54 +23,53 @@ using namespace LAMMPS_NS;
 using namespace FixConst;
 
 extern "C" {
-void start_pw(MPI_Fint comm, int partitions[4],
-              const char *input_file, const char *output_file,
-              int* nat, double *x_qm,
-              bigint nec);
-void update_pw(double *x_qm, double *x_ec);
-void calc_pw(double *f_qm, double *f_ec);
-void end_pw(int *exit_status);
-double energy_pw(void);
+//void start_cp(MPI_Fint comm, int partitions[4],
+//              const char *input_file, const char *output_file,
+//              int* nat, double *x_qm,
+//              bigint nec);
+//void update_cp(double *x_qm, double *x_ec);
+//void calc_cp(double *f_qm, double *f_ec);
+//void end_cp();
+//double energy_cp(void);
 }
 
 /* ---------------------------------------------------------------------- */
 
-FixPW::FixPW(LAMMPS *l, int narg, char **arg):
+FixCP::FixCP(LAMMPS *l, int narg, char **arg):
     FixQE{l, narg, arg}
 {
-  // initially collect coordinates so PW will be initialized from LAMMPS instead of file
+  // initially collect coordinates so CP will be initialized from LAMMPS instead of file
   auto nat = static_cast<int>(nqm);
   collect_positions();
 
-  // Boot up PWScf
-  start_pw(MPI_Comm_c2f(world), mpi_partitions,
-           inp_file.data(), out_file.data(),
-           &nat, qm_buf[0],
-           nec);
+  // Boot up CP
+//  start_cp(MPI_Comm_c2f(world), mpi_partitions,
+//           inp_file.data(), out_file.data(),
+//           &nat, qm_buf[0],
+//           nec);
   initialized = true;
 
-  // check if pw has been launched succesfully and with compatible input
-  /* NOTE: using one, not sure if a stray pwscf process may run off.
-   * may be if pw had been compiled against a different MPI version.
-   * if so, may be resolved if building pw is done via lammps' buildsystem.
+  // check if CP has been launched succesfully and with compatible input
+  /* NOTE: using one, not sure if a stray CP process may run off.
+   * may be if CP had been compiled against a different MPI version.
+   * if so, may be resolved if building CP is done via LAMMPS' buildsystem.
    */
   if (nat<0){
-    error->one(FLERR, "Error opening output file for fix qe/pw.");
+    error->one(FLERR, "Error opening output file for fix qe/cp.");
   }else if(nat != nqm){
-    error->one(FLERR, "Mismatching number of atoms in fix qe/pw.");
+    error->one(FLERR, "Mismatching number of atoms in fix qe/cp.");
   }
 }
 
-FixPW::~FixPW()
+FixCP::~FixCP()
 {
   if(initialized){
-    int result;
-    end_pw(&result);
+//    end_cp();
     initialized = false;
   }
 }
 
-int FixPW::setmask()
+int FixCP::setmask()
 {
   return POST_FORCE
        | MIN_POST_FORCE
@@ -80,45 +79,47 @@ int FixPW::setmask()
   ;
 }
 
-double FixPW::compute_scalar()
+double FixCP::compute_scalar()
 {
-  return energy_pw() * escale;
+// TODO
+//  return energy_cp() * escale;
+  return 0;
 }
 
-void FixPW::setup(int i)
+void FixCP::setup(int i)
 {
   post_force(i);
 }
 
-void FixPW::min_setup(int i)
+void FixCP::min_setup(int i)
 {
   post_force(i);
 }
 
-void FixPW::min_post_force(int i)
+void FixCP::min_post_force(int i)
 {
   post_force(i);
 }
 
-void FixPW::post_force(int)
+void FixCP::post_force(int)
 {
-  // run scf and receive forces
-  calc_pw(qm_buf[0], ec_buf[0]);
+  // execute a CP-step and receive forces
+//  calc_cp(qm_buf[0], ec_buf[0]);
 
   // distribute forces across LAMMPS processes
   distribute_forces();
 }
 
-void FixPW::min_pre_force(int)
+void FixCP::min_pre_force(int)
 {
   post_integrate();
 }
 
-void FixPW::post_integrate()
+void FixCP::post_integrate()
 {
   // collect positions of LAMMPS processes
   collect_positions();
 
-  // transmit to PWScf
-  update_pw(qm_buf[0], ec_buf[0]);
+  // transmit to CP
+//  update_cp(qm_buf[0], ec_buf[0]);
 }

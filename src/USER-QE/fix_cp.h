@@ -11,23 +11,23 @@
    See the README file in the top-level LAMMPS directory.
 ------------------------------------------------------------------------- */
 
-#ifdef FIX_CLASS
+//#ifdef FIX_CLASS
 
-FixStyle(qe/pw,FixPW)
+//FixStyle(qe/cp,FixPW)
 
-#else
+//#else
 
-#ifndef LMP_FIX_PW_H
-#define LMP_FIX_PW_H
+#ifndef LMP_FIX_CP_H
+#define LMP_FIX_CP_H
 
 #include "fix_qe.h"
 
 namespace LAMMPS_NS {
 
-class FixPW : public FixQE {
+class FixCP : public FixQE {
  public:
-  FixPW(class LAMMPS *, int, char **);
-  ~FixPW() override;
+  FixCP(class LAMMPS *, int, char **);
+  ~FixCP() override;
   int setmask() override;
   // send new positions
   void post_integrate() override;
@@ -45,7 +45,7 @@ class FixPW : public FixQE {
 }
 
 #endif
-#endif
+//#endif
 
 /* ERROR/WARNING messages:
 
