@@ -1,0 +1,7 @@
+This package implements the "fix pw" and "fix cp" commands which can
+be used in a LAMMPS input script.
+
+These fixes couple the Quantum-Espresso package to LAMMPS and allow
+for DFT calculations to be performed in the context of a LAMMPS simulation.
+
+This package was written by Sebastian Gsänger at FAU (sebastian.gsaenger at fau.de).
