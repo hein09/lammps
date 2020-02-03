@@ -18,6 +18,7 @@
 #include "fix_pw.h"
 
 #include "error.h"
+#include <iostream>
 
 using namespace LAMMPS_NS;
 using namespace FixConst;
@@ -25,10 +26,10 @@ using namespace FixConst;
 extern "C" {
 void start_pw(MPI_Fint comm, int partitions[4],
               const char *input_file, const char *output_file,
-              int* nat, double *x_qm,
-              bigint nec);
-void update_pw(double *x_qm, double *x_ec);
-void calc_pw(double *f_qm, double *f_ec);
+              int* nat, FixPW::commdata_t *dat);
+//              bigint nec);
+void update_pw(FixPW::commdata_t *x_qm);//, double *x_ec);
+void calc_pw(FixPW::commdata_t *f_qm);//, double *f_ec);
 void end_pw(int *exit_status);
 double energy_pw(void);
 }
@@ -39,14 +40,13 @@ FixPW::FixPW(LAMMPS *l, int narg, char **arg):
     FixQE{l, narg, arg}
 {
   // initially collect coordinates so PW will be initialized from LAMMPS instead of file
-  auto nat = static_cast<int>(nqm);
+  auto nat = static_cast<int>(qm_coll->nat);
   collect_positions();
 
   // Boot up PWScf
   start_pw(MPI_Comm_c2f(world), mpi_partitions,
            inp_file.data(), out_file.data(),
-           &nat, qm_buf[0],
-           nec);
+           &nat, qm_coll->buffer.data());
   initialized = true;
 
   // check if pw has been launched succesfully and with compatible input
@@ -56,8 +56,11 @@ FixPW::FixPW(LAMMPS *l, int narg, char **arg):
    */
   if (nat<0){
     error->one(FLERR, "Error opening output file for fix qe/pw.");
-  }else if(nat != nqm){
-    error->one(FLERR, "Mismatching number of atoms in fix qe/pw.");
+  }else if(nat != qm_coll->nat){
+    char msg[50];
+    sprintf(msg, "Mismatching number of atoms in fix qe/pw: %d(pw) vs %d(lmp)",
+            nat, qm_coll->nat);
+    error->one(FLERR, msg);
   }
 }
 
@@ -103,7 +106,7 @@ void FixPW::min_post_force(int i)
 void FixPW::post_force(int)
 {
   // run scf and receive forces
-  calc_pw(qm_buf[0], ec_buf[0]);
+  calc_pw(qm_coll->buffer.data());
 
   // distribute forces across LAMMPS processes
   distribute_forces();
@@ -120,5 +123,5 @@ void FixPW::post_integrate()
   collect_positions();
 
   // transmit to PWScf
-  update_pw(qm_buf[0], ec_buf[0]);
+  update_pw(qm_coll->buffer.data());
 }

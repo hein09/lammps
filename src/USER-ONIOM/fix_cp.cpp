@@ -23,13 +23,13 @@ using namespace LAMMPS_NS;
 using namespace FixConst;
 
 extern "C" {
-//void start_cp(MPI_Fint comm, int partitions[4],
-//              const char *input_file, const char *output_file,
-//              int* nat, double *x_qm,
-//              bigint nec);
-//void update_cp(double *x_qm, double *x_ec);
-//void calc_cp(double *f_qm, double *f_ec);
-//void end_cp();
+void start_cp(MPI_Fint comm, int partitions[4],
+              const char *input_file, const char *output_file,
+              int* nat, double *x_qm,
+              bigint nec);
+void update_cp(double *x_qm, double *x_ec);
+void calc_cp(double *f_qm, double *f_ec);
+void end_cp();
 //double energy_cp(void);
 }
 
@@ -39,7 +39,7 @@ FixCP::FixCP(LAMMPS *l, int narg, char **arg):
     FixQE{l, narg, arg}
 {
   // initially collect coordinates so CP will be initialized from LAMMPS instead of file
-  auto nat = static_cast<int>(nqm);
+  auto nat = static_cast<int>(qm_coll->nat);
   collect_positions();
 
   // Boot up CP
@@ -56,7 +56,7 @@ FixCP::FixCP(LAMMPS *l, int narg, char **arg):
    */
   if (nat<0){
     error->one(FLERR, "Error opening output file for fix qe/cp.");
-  }else if(nat != nqm){
+  }else if(nat != qm_coll->nat){
     error->one(FLERR, "Mismatching number of atoms in fix qe/cp.");
   }
 }

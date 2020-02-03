@@ -35,7 +35,7 @@ using namespace FixConst;
 bool FixQE::initialized = false;
 
 FixQE::FixQE(LAMMPS *l, int narg, char **arg):
-    Fix{l, narg, arg}
+    FixCollect{l, narg, arg}
 {
   // this fix contributes to the systems energy
   thermo_energy = 1;
@@ -76,6 +76,9 @@ FixQE::FixQE(LAMMPS *l, int narg, char **arg):
     error->all(FLERR, msg);
   }
 
+  // request collection for main qm group
+  qm_coll = get_collection(arg[1]);
+
   // require regular input-file to setup QE
   inp_file = arg[3];
   // redirect stdout of QE
@@ -88,6 +91,7 @@ FixQE::FixQE(LAMMPS *l, int narg, char **arg):
   // optional additional arguments
   int iarg = 4;
   while(iarg < narg-1){
+    // QE Parallelization flags
     if(strcmp(arg[iarg], "npool") == 0){
       mpi_partitions[0] = force->inumeric(FLERR, arg[iarg+1]);
       iarg += 2;
@@ -100,17 +104,16 @@ FixQE::FixQE(LAMMPS *l, int narg, char **arg):
     }else if(strcmp(arg[iarg], "ndiag") == 0){
       mpi_partitions[3] = force->inumeric(FLERR, arg[iarg+1]);
       iarg += 2;
+    // Electrostatic coupling
     }else if(strcmp(arg[iarg], "ec") == 0){
-      ec_group = group->find(arg[iarg+1]);
       if(comm->me == 0)
         error->warning(FLERR, "Electrostatic coupling is not efficient");
-      if(ec_group < 0){
-        error->all(FLERR, "Invalid group given as argument to 'ec'");
-      }
-      if(ec_group == igroup){
+      ec_coll = get_collection(arg[iarg+1]);
+      if(ec_coll->group_id == qm_coll->group_id){
         error->all(FLERR, "EC group must differ from main group of fix qe/pw");
       }
       iarg += 2;
+    // Link atoms
     }else if(strcmp(arg[iarg], "link") == 0){
       int nlink = force->inumeric(FLERR, arg[iarg+1]);
       linkatoms.resize(nlink);
@@ -126,6 +129,7 @@ FixQE::FixQE(LAMMPS *l, int narg, char **arg):
         error->all(FLERR, "Duplicate entries in list of link atoms");
       }
       iarg += 2+2*nlink;
+    // Scheme for EC-handling of Link atoms
     }else if(strcmp(arg[iarg], "scheme") == 0){
       if(strcmp(arg[iarg+1], "Z1") == 0){
         charge_scheme = charge_t::Z1;
@@ -148,22 +152,9 @@ FixQE::FixQE(LAMMPS *l, int narg, char **arg):
     }
   }
 
-  // get number of QM atoms and initialize qm_buf
-  nqm = group->count(igroup);
-  if(nqm > MAXSMALLINT){
-    char msg[40];
-    sprintf(msg, "Too many QM atoms for fix %s", style);
-    error->all(FLERR, msg);
-  }
-  char qm_name[20];
-  sprintf(qm_name, "%s:qm_buf", style);
-  memory->grow(ec_buf, static_cast<int>(nqm), 3, qm_name);
-
   // calculate number of EC atoms and initialize_ec_buf
-  char ec_name[20];
-  sprintf(ec_name, "%s:ec_buf", style);
-  if(ec_group >= 0){
-    nec = group->count(ec_group);
+  if(ec_coll){
+    auto nec = ec_coll->nat;
     if(comm->me == 0){
       switch(charge_scheme){
       case charge_t::Z1:
@@ -182,23 +173,7 @@ FixQE::FixQE(LAMMPS *l, int narg, char **arg):
         error->all(FLERR, "Invalid charge redistribution scheme");
       }
     }
-    MPI_Bcast(&nec, 1, MPI_LMP_BIGINT, 0, world);
-    if(nec > MAXSMALLINT){
-      char msg[40];
-      sprintf(msg, "Too many EC atoms for fix %s", style);
-      error->all(FLERR, msg);
-    }
-    memory->grow(ec_buf, static_cast<int>(nec), 3, ec_name);
-  }else{
-    // dummy-initialize ec_buf so we have valid pointers for passing to fortran
-    memory->grow(ec_buf, 1, 3, ec_name);
-  }
-
-  // collect and save tags of main group
-  collect_tags(groupbit, nqm, qm_idx2tag, qm_tag2idx);
-  if(ec_group >= 0){
-    const auto ecmask = group->bitmask[ec_group];
-    collect_tags(ecmask, nec, ec_idx2tag, ec_tag2idx);
+    // TODO: preallocate space for additional atoms
   }
 
   // validate link and modified-charge atoms
@@ -209,9 +184,11 @@ FixQE::FixQE(LAMMPS *l, int narg, char **arg):
       error->all(FLERR, msg);
     }
     // make sure map from global to local ids is initialized
-    int mapflag{0};
+    // TODO: ghost in atom->map could be problematic, could also be much slower than needed,
+    // evaluate other solution
+    bool mapflag{false};
     if(!atom->map_style){
-      mapflag = 1;
+      mapflag = true;
       atom->map_init();
       atom->map_set();
     }
@@ -224,7 +201,7 @@ FixQE::FixQE(LAMMPS *l, int narg, char **arg):
                   style, link.link_atom);
           error->one(FLERR, msg);
       }
-      auto neighbors = get_bound_neighbors(link.link_atom, groupbit);
+      auto neighbors = get_bound_neighbors(link.link_atom, groupbit, 0);
       if(comm->me == 0){
         if(neighbors.empty()){
           char msg[50];
@@ -242,15 +219,15 @@ FixQE::FixQE(LAMMPS *l, int narg, char **arg):
       }
     }
     // if needed, find atoms whose charges need to be modified
-    if(ec_group >= 0){
-      const auto ecmask = group->bitmask[ec_group];
+    if(ec_coll){
+      const auto ecmask = group->bitmask[ec_coll->group_id];
       if(charge_scheme == charge_t::Z1){
         // only ignore charge of link-atoms,
         // which is assumed to be excluded from EC group
       }else if(charge_scheme == charge_t::Z2){
         // ignore charge of 1-2 neighbors
         for(const auto& link: linkatoms){
-          auto neighbors = get_bound_neighbors(link.link_atom, ecmask);
+          auto neighbors = get_bound_neighbors(link.link_atom, ecmask, 0);
           for(const auto& n: neighbors){
             chargeatoms.push_back({n, -1});
           }
@@ -266,7 +243,7 @@ FixQE::FixQE(LAMMPS *l, int narg, char **arg):
       }else if((charge_scheme == charge_t::RCD) || (charge_scheme == charge_t::CS)){
         // create virtual point charges depending on 1-2 neighbors
         for(const auto& link: linkatoms){
-          auto neighbors = get_bound_neighbors(link.link_atom, ecmask);
+          auto neighbors = get_bound_neighbors(link.link_atom, ecmask, 0);
           for(const auto& n: neighbors){
             chargeatoms.push_back({n, link.link_atom});
           }
@@ -279,26 +256,16 @@ FixQE::FixQE(LAMMPS *l, int narg, char **arg):
       atom->map_style = 0;
     }
   }
-
-  // init buffers for variable-size communication
-  recv_count_buf = new int[universe->nprocs];
-  displs_buf = new int[universe->nprocs];
-}
-
-FixQE::~FixQE()
-{
-  delete [] displs_buf;
-  delete [] recv_count_buf;
-  memory->destroy(qm_buf);
-  memory->destroy(ec_buf);
 }
 
 void FixQE::distribute_forces()
 {
   // redistribute forces of link atoms
+  auto& buffer = qm_coll->buffer;
+  const auto& tag2idx = qm_coll->tag2idx;
   for(const auto& l: linkatoms){
-    double* forceL = qm_buf[qm_tag2idx[l.link_atom]];
-    double* forceQ = qm_buf[qm_tag2idx[l.qm_atom]];
+    auto& forceL = buffer[tag2idx.at(l.link_atom)].x;
+    auto& forceQ = buffer[tag2idx.at(l.qm_atom)].x;
     forceQ[0] += (1-l.ratio)*forceL[0];
     forceQ[1] += (1-l.ratio)*forceL[1];
     forceQ[2] += (1-l.ratio)*forceL[2];
@@ -306,31 +273,24 @@ void FixQE::distribute_forces()
     forceL[1] *= l.ratio;
     forceL[2] *= l.ratio;
   }
+
   // distribute forces across lammps processes
-  distribute_forces_impl(nqm, qm_buf, qm_idx2tag);
-  if(ec_group >= 0) distribute_forces_impl(nec, ec_buf, ec_idx2tag);
+  distribute_forces_impl(*qm_coll);
+  if(ec_coll) distribute_forces_impl(*ec_coll);
 }
 
-void FixQE::distribute_forces_impl(bigint nat, double** buffer, const std::vector<tagint>& tags)
+void FixQE::distribute_forces_impl(collection_t& coll)
 {
-  // sync buffer
-  comm_buf.resize(static_cast<size_t>(nat));
-  if(comm->me == 0){
-    for(int i=0; i<nat; ++i){
-      comm_buf[i] = {tags[i], buffer[i][0],
-                     buffer[i][1], buffer[i][2]};
-    }
-  }
-  MPI_Bcast(comm_buf.data(), nat*sizeof(decltype(comm_buf)::value_type), MPI_BYTE, 0, world);
-  // add forces to local atoms
+  auto& buffer = coll.buffer;
+  MPI_Bcast(buffer.data(), coll.nat*sizeof(commdata_t), MPI_BYTE, 0, world);
   const tagint * const tag = atom->tag;
   double ** f = atom->f;
   for(int i=0; i<atom->nlocal; ++i){
-    for(auto& dat: comm_buf){
+    for(auto& dat: buffer){
       if(tag[i] == dat.tag){
-        f[i][0] += dat.x*fscale;
-        f[i][1] += dat.y*fscale;
-        f[i][2] += dat.z*fscale;
+        f[i][0] += dat.x[0]*fscale;
+        f[i][1] += dat.x[1]*fscale;
+        f[i][2] += dat.x[2]*fscale;
       }
     }
   }
@@ -339,87 +299,20 @@ void FixQE::distribute_forces_impl(bigint nat, double** buffer, const std::vecto
 void FixQE::collect_positions()
 {
   // collect positions of lammps processes on proc 0
-  collect_positions_impl(nqm, qm_buf, qm_tag2idx);
-  if(ec_group >= 0){
-    collect_positions_impl(nec, ec_buf, ec_tag2idx);
+  collect_lammps(*qm_coll, atom->x);
+  if(ec_coll){
+    collect_lammps(*ec_coll, atom->x);
   }
 
-  // modify positions of link atoms
+  // TODO: modify positions of link atoms
+  auto& buffer = qm_coll->buffer;
+  const auto& tag2idx = qm_coll->tag2idx;
   for(const auto& l: linkatoms){
-    double* posL = qm_buf[qm_tag2idx[l.link_atom]];
-    double* posQ = qm_buf[qm_tag2idx[l.qm_atom]];
+    auto& posL = buffer[tag2idx.at(l.link_atom)].x;
+    auto& posQ = buffer[tag2idx.at(l.qm_atom)].x;
     posL[0] = posQ[0] + l.ratio * (posL[0]-posQ[0]);
     posL[1] = posQ[1] + l.ratio * (posL[1]-posQ[1]);
     posL[2] = posQ[2] + l.ratio * (posL[2]-posQ[2]);
-  }
-
-}
-
-void FixQE::collect_positions_impl(bigint nat, double **buffer, const std::map<tagint, int>& hash)
-{
-  const int *const mask = atom->mask;
-  const tagint * const tag = atom->tag;
-  const double * const * const x = atom->x;
-  // collect local atom positions
-  decltype(comm_buf) tmp;
-  tmp.reserve(static_cast<size_t>(nat));
-  for(int i=0; i<atom->nlocal; ++i){
-    if(mask[i] & groupbit){
-      tmp.push_back({hash.at(tag[i]), x[i][0], x[i][1], x[i][2]});
-    }
-  }
-  // collect each proc's number of atoms
-  int send_count = tmp.size() * sizeof(decltype (tmp)::value_type);
-  MPI_Allgather(&send_count, 1, MPI_INT, recv_count_buf, 1, MPI_INT, world);
-  // construct displacement
-  displs_buf[0] = 0;
-  for(int i=1; i<universe->nprocs; ++i){
-    displs_buf[i] = displs_buf[i-1]+recv_count_buf[i-1];
-  }
-  // collect position
-  comm_buf.resize(static_cast<size_t>(nat));
-  MPI_Allgatherv(tmp.data(), send_count, MPI_BYTE,
-                 comm_buf.data(), recv_count_buf, displs_buf, MPI_BYTE, world);
-
-  // extract data to contiguous memory
-  for(auto& dat: comm_buf){
-    buffer[dat.tag][0] = dat.x;
-    buffer[dat.tag][1] = dat.y;
-    buffer[dat.tag][2] = dat.z;
-  }
-}
-
-void FixQE::collect_tags(int mask, bigint nat,
-                         std::vector<tagint> &tags,
-                         std::map<tagint, int> &hash)
-{
-  // collect process-local tags
-  std::vector<tagint> tmp{};
-  tmp.reserve(static_cast<size_t>(nat));
-  for(int i=0; i<atom->nlocal; ++i){
-    if(atom->mask[i] & mask)
-      tmp.push_back(atom->tag[i]);
-  }
-
-  // gather number of tags
-  int send_count = tmp.size() * sizeof(decltype (tmp)::value_type);
-  MPI_Allgather(&send_count, 1, MPI_INT, recv_count_buf, 1, MPI_INT, world);
-
-  // construct displacement
-  displs_buf[0] = 0;
-  for(int i=1; i<universe->nprocs; ++i){
-    displs_buf[i] = displs_buf[i-1]+recv_count_buf[i-1];
-  }
-
-  // gather and sort tags
-  tags.resize(static_cast<size_t>(nat));
-  MPI_Allgatherv(tmp.data(), send_count, MPI_BYTE,
-                 tags.data(), recv_count_buf, displs_buf, MPI_BYTE, world);
-  std::sort(tags.begin(), tags.end());
-
-  // assign tags to qm-id
-  for(int i=0; i<nat; ++i){
-    hash[tags[i]] = i;
   }
 }
 

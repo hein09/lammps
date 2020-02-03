@@ -11,11 +11,11 @@
    See the README file in the top-level LAMMPS directory.
 ------------------------------------------------------------------------- */
 
-//#ifdef FIX_CLASS
+#ifdef FIX_CLASS
 
-//FixStyle(qe/cp,FixPW)
+FixStyle(qe/cp,FixCP)
 
-//#else
+#else
 
 #ifndef LMP_FIX_CP_H
 #define LMP_FIX_CP_H
@@ -45,7 +45,7 @@ class FixCP : public FixQE {
 }
 
 #endif
-//#endif
+#endif
 
 /* ERROR/WARNING messages:
 

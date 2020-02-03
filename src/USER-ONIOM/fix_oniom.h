@@ -21,13 +21,13 @@ FixStyle(ONIOM,FixONIOM)
 #ifndef LMP_FIX_ONIOM
 #define LMP_FIX_ONIOM
 
-#include "fix.h"
+#include "fix_collect.h"
 #include <vector>
 #include <map>
 
 namespace LAMMPS_NS {
 
-class FixONIOM : public Fix {
+class FixONIOM : public FixCollect {
  public:
   FixONIOM(class LAMMPS *, int, char **);
   ~FixONIOM() override;
@@ -54,34 +54,20 @@ class FixONIOM : public Fix {
  public:
   bool   master{false};         // identifies first == master partition
   bool   minimize{false};       // distinguish between MD and Minimization
-  bool   run_once{false};       // make sure that Min and MD match communication
+  bool   ran_once{false};       // make sure that Min and MD match communication
   int    verbose{0};            // print level (<= 0 means no output)
   enum {PLUS=0x0, MINUS=0x1};
   struct conn_t{
-    conn_t(int mode=-1, int mc_group=-1, int mc_nat=-1, MPI_Comm comm=MPI_COMM_NULL,
-           const std::vector<tagint>& tags={}, const std::map<tagint, int>& hash={})
-        : mode{mode}, mc_group{mc_group}, mc_nat{mc_nat}, comm{comm},
-          tags{tags}, hash{hash}
-    {}
     int mode;
-    int mc_group;
-    int mc_nat;
+    int target;
     MPI_Comm comm;
-    std::vector<tagint> tags;
-    std::map<tagint,int> hash;
+    std::shared_ptr<collection_t> coll;
   };
   std::vector<conn_t> connections{};
 
- protected:
-  struct commdata_t{
-      tagint tag;
-      double x,y,z;
-      double q;
-  };
-
-  std::vector<commdata_t> comm_buf; // persistent storage for per-atom data
-  int *recv_count_buf;
-  int *displs_buf;
+ private:
+  MPI_Comm connect_to_slave(int target);
+  MPI_Comm connect_to_master();
 };
 
 }

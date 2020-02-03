@@ -16,6 +16,11 @@ MODULE fix_pw
 
   INTEGER (kind=C_LONG) :: nec = 0
 
+  TYPE, BIND(C) :: commdata_t
+    integer(kind=C_INT) :: tag
+    real(kind=C_DOUBLE), DIMENSION(3) :: x
+  END TYPE commdata_t
+
   CONTAINS
 
     PURE FUNCTION energy_pw() BIND(C)
@@ -27,7 +32,7 @@ MODULE fix_pw
       RETURN
     END FUNCTION
 
-    SUBROUTINE start_pw(comm, partitions, infile, outfile, c_nat, pos_qm, c_nec) BIND(C)
+    SUBROUTINE start_pw(comm, partitions, infile, outfile, c_nat, buf_qm) BIND(C)
       USE command_line_options, ONLY: set_command_line
       USE cell_base,            ONLY: alat, at
       USE control_flags,        ONLY: gamma_only
@@ -54,9 +59,10 @@ MODULE fix_pw
       CHARACTER (kind=C_CHAR), INTENT(IN) :: infile(*), outfile(*)
       ! QM atoms
       INTEGER (kind=C_INT), INTENT(INOUT) :: c_nat
-      REAL(kind=c_double), INTENT(IN) :: pos_qm(3, c_nat)
+      TYPE(commdata_t), INTENT(IN) :: buf_qm(c_nat)
+      !REAL(kind=c_double), INTENT(IN) :: pos_qm(3, c_nat)
       ! Number of EC atoms
-      INTEGER (kind=C_LONG), INTENT(IN), VALUE :: c_nec
+      !INTEGER (kind=C_LONG), INTENT(IN), VALUE :: c_nec
       ! local variables
       CHARACTER(LEN=80) :: infile_, outfile_
       INTEGER :: i
@@ -112,9 +118,13 @@ MODULE fix_pw
         ! center of cell
         coc = MATMUL(at, (/0.5d0, 0.5d0, 0.5d0/))
         ! center of molecule
-        com = SUM(pos_qm, dim=2) / (nat * alat * bohr_radius_angs)
+        !com = SUM(pos_qm, dim=2) / (nat * alat * bohr_radius_angs)
+        com = (/0, 0, 0/)
         DO i = 1, nat
-            rd_pos(:, i) = pos_qm(:, i) / (alat * bohr_radius_angs) + coc - com
+          com = com + buf_qm(i)%x / (nat * alat * bohr_radius_angs)
+        END DO
+        DO i = 1, nat
+            rd_pos(:, i) = buf_qm(i)%x / (alat * bohr_radius_angs) + coc - com
         END DO
       END IF
       CALL mp_bcast(rd_pos, ionode_id, comm_)
@@ -135,18 +145,20 @@ MODULE fix_pw
       CALL setup()
       CALL init_run()
       ! save number of EC atoms
-      nec = c_nec
+      !nec = c_nec
       ! mark as executed
       first_time = .false.
     END SUBROUTINE start_pw
 
-    SUBROUTINE calc_pw(f_qm, f_ec) BIND(C)
+    SUBROUTINE calc_pw(buf_qm) BIND(C)
       USE extrapolation, ONLY: update_file
       USE force_mod,     ONLY: force
       USE constants,     ONLY: rytoev, bohr_radius_angs
       IMPLICIT NONE
-      REAL(kind=c_double), INTENT(OUT) :: f_qm(3, nat)
-      REAL(kind=c_double), INTENT(OUT) :: f_ec(3, nec)
+      TYPE(commdata_t), INTENT(OUT) :: buf_qm(nat)
+      INTEGER :: i
+      !REAL(kind=c_double), INTENT(OUT) :: f_qm(3, nat)
+      !REAL(kind=c_double), INTENT(OUT) :: f_ec(3, nec)
       ! scf calculation
       CALL electrons()
       ! force calculation
@@ -154,14 +166,19 @@ MODULE fix_pw
       ! print coordinates in expected place
       CALL output_tau(.false., .false.)
       ! exchange forces
-      f_qm = force * rytoev / bohr_radius_angs
+      !f_qm = force * rytoev / bohr_radius_angs
+      IF (ionode) THEN
+        DO i = 1, nat
+          buf_qm(i)%x = force(:, i) * rytoev / bohr_radius_angs;
+        END DO
+      END IF
       ! TODO: implement forces on ec atoms
-      f_ec = 0
+      !f_ec = 0
       ! make sure extrapolation works
       CALL update_file()
     END SUBROUTINE calc_pw
 
-    SUBROUTINE update_pw(pos_qm, pos_ec) BIND(c)
+    SUBROUTINE update_pw(buf_qm) BIND(c)
       USE extrapolation, ONLY: update_pot
       USE constants,     ONLY: bohr_radius_angs
       USE cell_base,     ONLY: alat, at
@@ -169,8 +186,9 @@ MODULE fix_pw
       USE mp_world,      ONLY: world_comm
       USE mp,            ONLY: mp_bcast
       IMPLICIT NONE
-      REAL(kind=c_double), INTENT(IN) :: pos_qm(3, nat)
-      REAL(kind=c_double), INTENT(IN) :: pos_ec(3, nec)
+      TYPE(commdata_t), INTENT(IN) :: buf_qm(nat)
+      !REAL(kind=c_double), INTENT(IN) :: pos_qm(3, nat)
+      !REAL(kind=c_double), INTENT(IN) :: pos_ec(3, nec)
       REAL(DP), DIMENSION(3) :: com
       REAL(DP), DIMENSION(3) :: coc
       INTEGER :: i
@@ -179,9 +197,13 @@ MODULE fix_pw
         ! center of cell
         coc = MATMUL(at, (/0.5d0, 0.5d0, 0.5d0/))
         ! center of molecule
-        com = SUM(pos_qm, dim=2) / (nat * alat * bohr_radius_angs)
+        !com = SUM(pos_qm, dim=2) / (nat * alat * bohr_radius_angs)
+        com = (/0, 0, 0/)
         DO i = 1, nat
-            tau(:, i) = pos_qm(:, i) / (alat * bohr_radius_angs) + coc - com
+          com(:) = com(:) + buf_qm(i)%x / (nat * alat * bohr_radius_angs)
+        END DO
+        DO i = 1, nat
+            tau(:, i) = buf_qm(i)%x / (alat * bohr_radius_angs) + coc - com
         END DO
       END IF
       CALL mp_bcast(tau, ionode_id, world_comm)

@@ -1,0 +1,9 @@
+This package implements multiple commands which can be used to perform ONIOM calculations.
+
+The "oniom" command wraps the "run" and "minimization" commands and enables exchanging of positions and forces
+between multiple partitions according to the ONIOM-scheme.
+
+The "fix qe/pw" and "fix qe/cp" commands can be used to offload calculation to the respective program of the
+QuantumEspresso suite and perform BOMD or CPMD, respectively.
+
+This package was written by Sebastian Gsänger at FAU (sebastian.gsaenger at fau.de).
