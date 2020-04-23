@@ -18,7 +18,7 @@ if(PKG_USER-ONIOM)
     if(BUILD_QE_PW)
         enable_language(Fortran)
         find_package(qe REQUIRED)
-        find_package(MPI REQUIRED) #reimport to ensure get MPI::MPI_Fortran
+        find_package(MPI REQUIRED) #reimport to ensure we get MPI::MPI_Fortran
 
         list(APPEND USER-ONIOM_SOURCES ${USER-ONIOM_SOURCES_DIR}/fix_pw.f90)
         list(APPEND USER-ONIOM_HEADERS ${USER-ONIOM_SOURCES_DIR}/fix_pw.h)
@@ -32,7 +32,7 @@ if(PKG_USER-ONIOM)
     if(BUILD_QE_CP)
         enable_language(Fortran)
         find_package(qe REQUIRED)
-        find_package(MPI REQUIRED) #reimport to ensure get MPI::MPI_Fortran
+        find_package(MPI REQUIRED) #reimport to ensure we get MPI::MPI_Fortran
 
         list(APPEND USER-ONIOM_Sources ${USER-ONIOM_SOURCES_DIR}/fix_cp.f90)
         list(APPEND USER-ONIOM_HEADERS ${USER-ONIOM_SOURCES_DIR}/fix_cp.h)

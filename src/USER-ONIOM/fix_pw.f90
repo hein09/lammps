@@ -41,15 +41,16 @@ MODULE fix_pw
       USE environment,          ONLY: environment_start
       USE read_input,           ONLY: read_input_file
       USE check_stop,           ONLY: check_stop_init
+      USE ions_base,     	ONLY: tau
       USE input_parameters,     ONLY: outdir, calculation, &
-                                      ion_dynamics, restart_mode, &
-                                      rd_pos
+                                      ion_dynamics, restart_mode
       USE mp,                   ONLY: mp_bcast
       USE mp_pools,             ONLY: intra_pool_comm
       USE mp_bands,             ONLY: intra_bgrp_comm, inter_bgrp_comm
-      USE mp_diag,              ONLY: mp_start_diag
       USE parallel_include
       IMPLICIT NONE
+      !
+      include 'qe_lax/laxlib.fh'
       !
       ! MPI arguments
       INTEGER, VALUE :: comm
@@ -101,11 +102,12 @@ MODULE fix_pw
       CALL set_command_line(npool=npool_, ntg=ntask_, nband=nband_, ndiag=ndiag_)
       comm_ = comm
       CALL mp_startup(my_world_comm=comm_, start_images=.true.)
-      CALL mp_start_diag(ndiag_, comm_, intra_bgrp_comm, do_distr_diag_inside_bgrp_=.true.)
+      CALL laxlib_start(ndiag_, comm_, intra_bgrp_comm, do_distr_diag_inside_bgrp_=.true.)
       CALL set_mpi_comm_4_solvers( intra_pool_comm, intra_bgrp_comm, inter_bgrp_comm )
       ! read input file
       CALL environment_start('PWSCF')
       CALL read_input_file('PW', infile_)
+      CALL iosys()
       ! Check if input contains suitable number of atoms
       IF (c_nat /= nat) THEN
         ! send back mismatching nat to calling code
@@ -121,13 +123,14 @@ MODULE fix_pw
         !com = SUM(pos_qm, dim=2) / (nat * alat * bohr_radius_angs)
         com = (/0, 0, 0/)
         DO i = 1, nat
-          com = com + buf_qm(i)%x / (nat * alat * bohr_radius_angs)
+          com = com + buf_qm(i)%x
         END DO
+        com = com / (nat * alat * bohr_radius_angs)
         DO i = 1, nat
-            rd_pos(:, i) = buf_qm(i)%x / (alat * bohr_radius_angs) + coc - com
+            tau(:, i) = buf_qm(i)%x / (alat * bohr_radius_angs) + coc - com
         END DO
       END IF
-      CALL mp_bcast(rd_pos, ionode_id, comm_)
+      CALL mp_bcast(tau, ionode_id, comm_)
       ! overwrite some settings
       ! if we use 'md', we should benefit most easily from extrapolation
       calculation = 'md'
@@ -138,7 +141,6 @@ MODULE fix_pw
       ! reroute secondary output
       outdir = outfile_(5:)
       ! finalize initialization
-      CALL iosys()
       if ( gamma_only ) write(stdout, *) "gamma-point specific algorithms are used"
     ! TODO: can we use the stop-mechanism somehow?
       CALL check_stop_init()
@@ -216,7 +218,7 @@ MODULE fix_pw
     SUBROUTINE end_pw(retval) BIND(C)
       IMPLICIT NONE
       INTEGER (kind=C_INT), INTENT(OUT) :: retval
-      CALL laxlib_free_ortho_group()
+      CALL laxlib_end()
       CALL stop_run(retval)
       IF (ionode) THEN
         CLOSE(UNIT=55)
