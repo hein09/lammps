@@ -132,7 +132,7 @@ void FixCollect::collect_lammps(collection_t &coll, double **source)
   buffer.reserve(static_cast<size_t>(coll.nat));
   for(int i=0; i<atom->nlocal; ++i){
     if(mask[i] & groupbit){
-      buffer.push_back({tag[i], {source[i][0], source[i][1], source[i][2]}});
+      buffer.push_back({coll.tag2idx[tag[i]], {source[i][0], source[i][1], source[i][2]}});
     }
   }
 

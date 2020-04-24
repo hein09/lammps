@@ -32,7 +32,7 @@ class FixCollect : public Fix {
   // data coupled to its atom's tag
 
   struct commdata_t{
-      int tag;
+      int idx;
       double x[3];
   };
  protected:

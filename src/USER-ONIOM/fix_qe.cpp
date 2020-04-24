@@ -261,17 +261,19 @@ FixQE::FixQE(LAMMPS *l, int narg, char **arg):
 void FixQE::distribute_forces()
 {
   // redistribute forces of link atoms
-  auto& buffer = qm_coll->buffer;
-  const auto& tag2idx = qm_coll->tag2idx;
-  for(const auto& l: linkatoms){
-    auto& forceL = buffer[tag2idx.at(l.link_atom)].x;
-    auto& forceQ = buffer[tag2idx.at(l.qm_atom)].x;
-    forceQ[0] += (1-l.ratio)*forceL[0];
-    forceQ[1] += (1-l.ratio)*forceL[1];
-    forceQ[2] += (1-l.ratio)*forceL[2];
-    forceL[0] *= l.ratio;
-    forceL[1] *= l.ratio;
-    forceL[2] *= l.ratio;
+  if(comm->me == 0){
+    auto& buffer = qm_coll->buffer;
+    const auto& tag2idx = qm_coll->tag2idx;
+    for(const auto& l: linkatoms){
+      auto& forceL = buffer[tag2idx.at(l.link_atom)].x;
+      auto& forceQ = buffer[tag2idx.at(l.qm_atom)].x;
+      forceQ[0] += (1-l.ratio)*forceL[0];
+      forceQ[1] += (1-l.ratio)*forceL[1];
+      forceQ[2] += (1-l.ratio)*forceL[2];
+      forceL[0] *= l.ratio;
+      forceL[1] *= l.ratio;
+      forceL[2] *= l.ratio;
+    }
   }
 
   // distribute forces across lammps processes
@@ -287,7 +289,7 @@ void FixQE::distribute_forces_impl(collection_t& coll)
   double ** f = atom->f;
   for(int i=0; i<atom->nlocal; ++i){
     for(auto& dat: buffer){
-      if(tag[i] == dat.tag){
+      if(tag[i] == coll.idx2tag[dat.idx]){
         f[i][0] += dat.x[0]*fscale;
         f[i][1] += dat.x[1]*fscale;
         f[i][2] += dat.x[2]*fscale;
@@ -304,15 +306,17 @@ void FixQE::collect_positions()
     collect_lammps(*ec_coll, atom->x);
   }
 
-  // TODO: modify positions of link atoms
-  auto& buffer = qm_coll->buffer;
-  const auto& tag2idx = qm_coll->tag2idx;
-  for(const auto& l: linkatoms){
-    auto& posL = buffer[tag2idx.at(l.link_atom)].x;
-    auto& posQ = buffer[tag2idx.at(l.qm_atom)].x;
-    posL[0] = posQ[0] + l.ratio * (posL[0]-posQ[0]);
-    posL[1] = posQ[1] + l.ratio * (posL[1]-posQ[1]);
-    posL[2] = posQ[2] + l.ratio * (posL[2]-posQ[2]);
+  // modify positions of link atoms on proc 0
+  if(comm->me == 0){
+    auto& buffer = qm_coll->buffer;
+    const auto& tag2idx = qm_coll->tag2idx;
+    for(const auto& l: linkatoms){
+      auto& posL = buffer[tag2idx.at(l.link_atom)].x;
+      auto& posQ = buffer[tag2idx.at(l.qm_atom)].x;
+      posL[0] = posQ[0] + l.ratio * (posL[0]-posQ[0]);
+      posL[1] = posQ[1] + l.ratio * (posL[1]-posQ[1]);
+      posL[2] = posQ[2] + l.ratio * (posL[2]-posQ[2]);
+    }
   }
 }
 

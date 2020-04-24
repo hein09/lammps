@@ -17,7 +17,7 @@ MODULE fix_pw
   INTEGER (kind=C_LONG) :: nec = 0
 
   TYPE, BIND(C) :: commdata_t
-    integer(kind=C_INT) :: tag
+    integer(kind=C_INT) :: idx
     real(kind=C_DOUBLE), DIMENSION(3) :: x
   END TYPE commdata_t
 
@@ -41,7 +41,7 @@ MODULE fix_pw
       USE environment,          ONLY: environment_start
       USE read_input,           ONLY: read_input_file
       USE check_stop,           ONLY: check_stop_init
-      USE ions_base,     	ONLY: tau
+      USE ions_base,            ONLY: tau
       USE input_parameters,     ONLY: outdir, calculation, &
                                       ion_dynamics, restart_mode
       USE mp,                   ONLY: mp_bcast
@@ -120,14 +120,13 @@ MODULE fix_pw
         ! center of cell
         coc = MATMUL(at, (/0.5d0, 0.5d0, 0.5d0/))
         ! center of molecule
-        !com = SUM(pos_qm, dim=2) / (nat * alat * bohr_radius_angs)
         com = (/0, 0, 0/)
         DO i = 1, nat
           com = com + buf_qm(i)%x
         END DO
         com = com / (nat * alat * bohr_radius_angs)
         DO i = 1, nat
-            tau(:, i) = buf_qm(i)%x / (alat * bohr_radius_angs) + coc - com
+            tau(:, buf_qm(i)%idx+1) = buf_qm(i)%x / (alat * bohr_radius_angs) + coc - com
         END DO
       END IF
       CALL mp_bcast(tau, ionode_id, comm_)
@@ -159,8 +158,6 @@ MODULE fix_pw
       IMPLICIT NONE
       TYPE(commdata_t), INTENT(OUT) :: buf_qm(nat)
       INTEGER :: i
-      !REAL(kind=c_double), INTENT(OUT) :: f_qm(3, nat)
-      !REAL(kind=c_double), INTENT(OUT) :: f_ec(3, nec)
       ! scf calculation
       CALL electrons()
       ! force calculation
@@ -168,10 +165,10 @@ MODULE fix_pw
       ! print coordinates in expected place
       CALL output_tau(.false., .false.)
       ! exchange forces
-      !f_qm = force * rytoev / bohr_radius_angs
       IF (ionode) THEN
         DO i = 1, nat
-          buf_qm(i)%x = force(:, i) * rytoev / bohr_radius_angs;
+          buf_qm(i)%idx = i-1
+          buf_qm(i)%x = force(:, i) * rytoev / bohr_radius_angs
         END DO
       END IF
       ! TODO: implement forces on ec atoms
@@ -189,8 +186,6 @@ MODULE fix_pw
       USE mp,            ONLY: mp_bcast
       IMPLICIT NONE
       TYPE(commdata_t), INTENT(IN) :: buf_qm(nat)
-      !REAL(kind=c_double), INTENT(IN) :: pos_qm(3, nat)
-      !REAL(kind=c_double), INTENT(IN) :: pos_ec(3, nec)
       REAL(DP), DIMENSION(3) :: com
       REAL(DP), DIMENSION(3) :: coc
       INTEGER :: i
@@ -202,10 +197,11 @@ MODULE fix_pw
         !com = SUM(pos_qm, dim=2) / (nat * alat * bohr_radius_angs)
         com = (/0, 0, 0/)
         DO i = 1, nat
-          com(:) = com(:) + buf_qm(i)%x / (nat * alat * bohr_radius_angs)
+          com(:) = com(:) + buf_qm(i)%x
         END DO
+        com = com / (nat * alat * bohr_radius_angs)
         DO i = 1, nat
-            tau(:, i) = buf_qm(i)%x / (alat * bohr_radius_angs) + coc - com
+            tau(:, buf_qm(i)%idx+1) = buf_qm(i)%x / (alat * bohr_radius_angs) + coc - com
         END DO
       END IF
       CALL mp_bcast(tau, ionode_id, world_comm)

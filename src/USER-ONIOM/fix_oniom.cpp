@@ -389,7 +389,7 @@ void FixONIOM::receive_positions()
   // update positions of relevant atoms
   for(int i=0; i<atom->nlocal; ++i){
     for(const auto& dat: buffer){
-      if(atom->tag[i] == dat.tag){
+      if(atom->tag[i] == coll.idx2tag[dat.idx]){
         atom->x[i][0] = dat.x[0];
         atom->x[i][1] = dat.x[1];
         atom->x[i][2] = dat.x[2];
@@ -426,7 +426,7 @@ void FixONIOM::receive_forces()
     double fscale = (con.mode & MINUS) ? -1 : 1;
     for(int i=0; i<atom->nlocal; ++i){
       for(const auto& dat: buffer){
-        if(atom->tag[i] == dat.tag){
+        if(atom->tag[i] == coll.idx2tag[dat.idx]){
           atom->f[i][0] += dat.x[0] * fscale;
           atom->f[i][1] += dat.x[1] * fscale;
           atom->f[i][2] += dat.x[2] * fscale;

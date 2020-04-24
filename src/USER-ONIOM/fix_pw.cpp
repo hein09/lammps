@@ -18,7 +18,6 @@
 #include "fix_pw.h"
 
 #include "error.h"
-#include <iostream>
 
 using namespace LAMMPS_NS;
 using namespace FixConst;
