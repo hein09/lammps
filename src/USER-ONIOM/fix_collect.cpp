@@ -36,10 +36,8 @@ FixCollect::FixCollect(LAMMPS *l, int narg, char **arg):
     Fix{l, narg, arg}
 {
   // initialize buffers for variable-size collectives
-  if(comm->me == 0){
-    recv_count_buf.resize(universe->nprocs);
-    displs_buf.resize(universe->nprocs);
-  }
+  recv_count_buf.resize(universe->nprocs);
+  displs_buf.resize(universe->nprocs);
 }
 
 double FixCollect::memory_usage()
