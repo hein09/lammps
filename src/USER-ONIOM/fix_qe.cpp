@@ -261,38 +261,39 @@ FixQE::FixQE(LAMMPS *l, int narg, char **arg):
 void FixQE::distribute_forces()
 {
   // redistribute forces of link atoms
-  if(comm->me == 0){
-    auto& buffer = qm_coll->buffer;
-    const auto& tag2idx = qm_coll->tag2idx;
-    for(const auto& l: linkatoms){
-      auto& forceL = buffer[tag2idx.at(l.link_atom)].x;
-      auto& forceQ = buffer[tag2idx.at(l.qm_atom)].x;
-      forceQ[0] += (1-l.ratio)*forceL[0];
-      forceQ[1] += (1-l.ratio)*forceL[1];
-      forceQ[2] += (1-l.ratio)*forceL[2];
-      forceL[0] *= l.ratio;
-      forceL[1] *= l.ratio;
-      forceL[2] *= l.ratio;
-    }
+  auto& buffer = qm_coll->buffer;
+  const auto& tag2idx = qm_coll->tag2idx;
+  for(const auto& l: linkatoms){
+    auto& forceL = buffer[tag2idx.at(l.link_atom)].x;
+    auto& forceQ = buffer[tag2idx.at(l.qm_atom)].x;
+    forceQ[0] += (1-l.ratio)*forceL[0];
+    forceQ[1] += (1-l.ratio)*forceL[1];
+    forceQ[2] += (1-l.ratio)*forceL[2];
+    forceL[0] *= l.ratio;
+    forceL[1] *= l.ratio;
+    forceL[2] *= l.ratio;
   }
 
-  // distribute forces across lammps processes
+  // reassign forces to local lammps atoms and mark buffer contents
   distribute_forces_impl(*qm_coll);
-  if(ec_coll) distribute_forces_impl(*ec_coll);
+  qm_coll->state = collection_t::State::Forces;
+  if(ec_coll){
+    distribute_forces_impl(*ec_coll);
+    ec_coll->state = collection_t::State::Forces;
+  }
 }
 
 void FixQE::distribute_forces_impl(collection_t& coll)
 {
   auto& buffer = coll.buffer;
-  MPI_Bcast(buffer.data(), coll.nat*sizeof(commdata_t), MPI_BYTE, 0, world);
   const tagint * const tag = atom->tag;
   double ** f = atom->f;
   for(int i=0; i<atom->nlocal; ++i){
     for(auto& dat: buffer){
       if(tag[i] == coll.idx2tag[dat.idx]){
-        f[i][0] += dat.x[0]*fscale;
-        f[i][1] += dat.x[1]*fscale;
-        f[i][2] += dat.x[2]*fscale;
+        f[i][0] += dat.x[0];
+        f[i][1] += dat.x[1];
+        f[i][2] += dat.x[2];
       }
     }
   }
@@ -300,23 +301,31 @@ void FixQE::distribute_forces_impl(collection_t& coll)
 
 void FixQE::collect_positions()
 {
-  // collect positions of lammps processes on proc 0
-  collect_lammps(*qm_coll, atom->x);
-  if(ec_coll){
-    collect_lammps(*ec_coll, atom->x);
+  // collect positions of lammps processes if needed
+  if(qm_coll->state != collection_t::State::Positions){
+    // TODO: benchmark this
+//    gather_root(*qm_coll, atom->x);
+//    auto &buffer = qm_coll->buffer;
+//    MPI_Bcast(buffer.data(), buffer.size() * sizeof(commdata_t), MPI_BYTE, 0, world);
+//    gather_all(*qm_coll, atom->x);
+    gather_all_inplace(*qm_coll, atom->x);
+    qm_coll->state = collection_t::State::Positions;
+  }
+  // modify positions of link atoms
+  auto& buffer = qm_coll->buffer;
+  const auto& tag2idx = qm_coll->tag2idx;
+  for(const auto& l: linkatoms){
+    auto& posL = buffer[tag2idx.at(l.link_atom)].x;
+    auto& posQ = buffer[tag2idx.at(l.qm_atom)].x;
+    posL[0] = posQ[0] + l.ratio * (posL[0]-posQ[0]);
+    posL[1] = posQ[1] + l.ratio * (posL[1]-posQ[1]);
+    posL[2] = posQ[2] + l.ratio * (posL[2]-posQ[2]);
   }
 
-  // modify positions of link atoms on proc 0
-  if(comm->me == 0){
-    auto& buffer = qm_coll->buffer;
-    const auto& tag2idx = qm_coll->tag2idx;
-    for(const auto& l: linkatoms){
-      auto& posL = buffer[tag2idx.at(l.link_atom)].x;
-      auto& posQ = buffer[tag2idx.at(l.qm_atom)].x;
-      posL[0] = posQ[0] + l.ratio * (posL[0]-posQ[0]);
-      posL[1] = posQ[1] + l.ratio * (posL[1]-posQ[1]);
-      posL[2] = posQ[2] + l.ratio * (posL[2]-posQ[2]);
-    }
+  // collect positions of EC atoms if needed
+  if(ec_coll && ec_coll->state != collection_t::State::Positions){
+    gather_all(*ec_coll, atom->x);
+    ec_coll->state = collection_t::State::Positions;
   }
 }
 

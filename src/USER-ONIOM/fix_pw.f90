@@ -23,12 +23,13 @@ MODULE fix_pw
 
   CONTAINS
 
-    PURE FUNCTION energy_pw() BIND(C)
+    PURE FUNCTION energy_pw(escale) BIND(C)
       USE ener,      ONLY: etot
       USE constants, ONLY: rytoev
       IMPLICIT NONE
       REAL(kind=C_DOUBLE) :: energy_pw
-      energy_pw = etot * rytoev
+      REAL(kind=C_DOUBLE), INTENT(IN), VALUE :: escale
+      energy_pw = etot * rytoev * escale
       RETURN
     END FUNCTION
 
@@ -107,29 +108,6 @@ MODULE fix_pw
       ! read input file
       CALL environment_start('PWSCF')
       CALL read_input_file('PW', infile_)
-      CALL iosys()
-      ! Check if input contains suitable number of atoms
-      IF (c_nat /= nat) THEN
-        ! send back mismatching nat to calling code
-        c_nat = nat
-        ! early return, not recoverable
-        RETURN
-      END IF
-      ! initialize positions from lammps
-      IF (ionode) THEN
-        ! center of cell
-        coc = MATMUL(at, (/0.5d0, 0.5d0, 0.5d0/))
-        ! center of molecule
-        com = (/0, 0, 0/)
-        DO i = 1, nat
-          com = com + buf_qm(i)%x
-        END DO
-        com = com / (nat * alat * bohr_radius_angs)
-        DO i = 1, nat
-            tau(:, buf_qm(i)%idx+1) = buf_qm(i)%x / (alat * bohr_radius_angs) + coc - com
-        END DO
-      END IF
-      CALL mp_bcast(tau, ionode_id, comm_)
       ! overwrite some settings
       ! if we use 'md', we should benefit most easily from extrapolation
       calculation = 'md'
@@ -140,6 +118,27 @@ MODULE fix_pw
       ! reroute secondary output
       outdir = outfile_(5:)
       ! finalize initialization
+      CALL iosys()
+      ! Check if input contains suitable number of atoms
+      IF (c_nat /= nat) THEN
+        ! send back mismatching nat to calling code
+        c_nat = nat
+        ! early return, not recoverable
+        RETURN
+      END IF
+      ! initialize positions from lammps
+      ! center of cell
+      coc = MATMUL(at, (/0.5d0, 0.5d0, 0.5d0/))
+      ! center of molecule
+      com = (/0, 0, 0/)
+      DO i = 1, nat
+        com = com + buf_qm(i)%x
+      END DO
+      com = com / (nat * alat * bohr_radius_angs)
+      DO i = 1, nat
+          tau(:, buf_qm(i)%idx+1) = buf_qm(i)%x / (alat * bohr_radius_angs) + coc - com
+      END DO
+      ! inform about gamma-algorithms
       if ( gamma_only ) write(stdout, *) "gamma-point specific algorithms are used"
     ! TODO: can we use the stop-mechanism somehow?
       CALL check_stop_init()
@@ -151,12 +150,13 @@ MODULE fix_pw
       first_time = .false.
     END SUBROUTINE start_pw
 
-    SUBROUTINE calc_pw(buf_qm) BIND(C)
+    SUBROUTINE calc_pw(buf_qm, fscale) BIND(C)
       USE extrapolation, ONLY: update_file
       USE force_mod,     ONLY: force
       USE constants,     ONLY: rytoev, bohr_radius_angs
       IMPLICIT NONE
       TYPE(commdata_t), INTENT(OUT) :: buf_qm(nat)
+      REAL(kind=C_DOUBLE), INTENT(IN), VALUE :: fscale
       INTEGER :: i
       ! scf calculation
       CALL electrons()
@@ -164,13 +164,11 @@ MODULE fix_pw
       CALL forces()
       ! print coordinates in expected place
       CALL output_tau(.false., .false.)
-      ! exchange forces
-      IF (ionode) THEN
-        DO i = 1, nat
-          buf_qm(i)%idx = i-1
-          buf_qm(i)%x = force(:, i) * rytoev / bohr_radius_angs
-        END DO
-      END IF
+      ! return forces
+      DO i = 1, nat
+        buf_qm(i)%idx = i-1
+        buf_qm(i)%x = force(:, i) * rytoev * fscale / bohr_radius_angs
+      END DO
       ! TODO: implement forces on ec atoms
       !f_ec = 0
       ! make sure extrapolation works
@@ -189,22 +187,19 @@ MODULE fix_pw
       REAL(DP), DIMENSION(3) :: com
       REAL(DP), DIMENSION(3) :: coc
       INTEGER :: i
-      ! exchange and re-center positions
-      IF (ionode) THEN
-        ! center of cell
-        coc = MATMUL(at, (/0.5d0, 0.5d0, 0.5d0/))
-        ! center of molecule
-        !com = SUM(pos_qm, dim=2) / (nat * alat * bohr_radius_angs)
-        com = (/0, 0, 0/)
-        DO i = 1, nat
-          com(:) = com(:) + buf_qm(i)%x
-        END DO
-        com = com / (nat * alat * bohr_radius_angs)
-        DO i = 1, nat
-            tau(:, buf_qm(i)%idx+1) = buf_qm(i)%x / (alat * bohr_radius_angs) + coc - com
-        END DO
-      END IF
-      CALL mp_bcast(tau, ionode_id, world_comm)
+      ! re-center positions
+      ! center of cell
+      coc = MATMUL(at, (/0.5d0, 0.5d0, 0.5d0/))
+      ! center of molecule
+      !com = SUM(pos_qm, dim=2) / (nat * alat * bohr_radius_angs)
+      com = (/0, 0, 0/)
+      DO i = 1, nat
+        com(:) = com(:) + buf_qm(i)%x
+      END DO
+      com = com / (nat * alat * bohr_radius_angs)
+      DO i = 1, nat
+          tau(:, buf_qm(i)%idx+1) = buf_qm(i)%x / (alat * bohr_radius_angs) + coc - com
+      END DO
       ! update wavefunctions
       CALL update_pot()
       ! re-initialize atomic position-dependent quantities

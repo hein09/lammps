@@ -29,8 +29,8 @@ class FixCollect : public Fix {
   FixCollect(LAMMPS *, int, char **);
 
   double memory_usage() override;
-  // data coupled to its atom's tag
 
+  // data coupled to its atom's fix-local index
   struct commdata_t{
       int idx;
       double x[3];
@@ -42,8 +42,10 @@ class FixCollect : public Fix {
    * and indices local to this or shared-ownership fixes
    */
   struct collection_t{
+      enum class State{OLD, Positions, Forces};
+      State state{State::OLD};
       bigint nat{};
-      int group_id{-1};
+      int group_id{-1}, group_bit{-1};
       std::vector<tagint> idx2tag{}; // fix to lammps
       std::map<tagint, int> tag2idx{}; // lammps to fix
       std::vector<commdata_t> buffer{}; // data-storage
@@ -53,12 +55,14 @@ class FixCollect : public Fix {
   // will be shared between multiple callers
   std::shared_ptr<collection_t> get_collection(char *group);
 
-  // collect data from lammps on partition's root
-  void collect_lammps(collection_t& coll, double** source);
+  // collect data from source to coll.buffer
+  void gather_root(collection_t& coll, double** source);
+  void gather_all(collection_t& coll, double** source);
+  void gather_all_inplace(collection_t& coll, double** source);
 
  private:
   std::vector<int> recv_count_buf, displs_buf; // buffer for variable-size MPI collective strides
-  void collect_tags(int groupmask, collection_t& coll);
+  void collect_tags(collection_t& coll);
   // tracking-table for collections
   static std::map<std::string, std::weak_ptr<collection_t>> collections;
 };

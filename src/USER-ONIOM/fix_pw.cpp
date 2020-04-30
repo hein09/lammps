@@ -28,9 +28,9 @@ void start_pw(MPI_Fint comm, int partitions[4],
               int* nat, FixPW::commdata_t *dat);
 //              bigint nec);
 void update_pw(FixPW::commdata_t *x_qm);//, double *x_ec);
-void calc_pw(FixPW::commdata_t *f_qm);//, double *f_ec);
+void calc_pw(FixPW::commdata_t *f_qm, double fscale);//, double *f_ec);
 void end_pw(int *exit_status);
-double energy_pw(void);
+double energy_pw(double escale);
 }
 
 /* ---------------------------------------------------------------------- */
@@ -84,28 +84,38 @@ int FixPW::setmask()
 
 double FixPW::compute_scalar()
 {
-  return energy_pw() * escale;
+  return energy_pw(escale);
 }
 
 void FixPW::setup(int i)
 {
+  // update positions again as system may have changed between fix creation and run
+  post_integrate();
+  // initial force evaluation
   post_force(i);
 }
 
 void FixPW::min_setup(int i)
 {
+  // TODO: min_pre_force collects position in min-loop BEFORE force evaulation.
+  // double calculating of same structure here?
+
+  // update positions again as system may have changed between fix creation and minimize
+  post_integrate();
+  // initial force evaluation
   post_force(i);
 }
 
 void FixPW::min_post_force(int i)
 {
+  // force evaluation
   post_force(i);
 }
 
 void FixPW::post_force(int)
 {
   // run scf and receive forces
-  calc_pw(qm_coll->buffer.data());
+  calc_pw(qm_coll->buffer.data(), fscale);
 
   // distribute forces across LAMMPS processes
   distribute_forces();
@@ -113,6 +123,7 @@ void FixPW::post_force(int)
 
 void FixPW::min_pre_force(int)
 {
+  // update positions
   post_integrate();
 }
 

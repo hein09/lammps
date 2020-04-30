@@ -63,7 +63,7 @@ FixONIOM::FixONIOM(LAMMPS *lmp, int narg, char **arg) :
       int target = force->inumeric(FLERR, arg[iarg+1])-1;
       if((target < 1 ) || (target>=universe->nworlds)){
         char msg[40];
-        sprintf(msg, "Invalid partition %i in oniom command", target);
+        sprintf(msg, "Invalid partition %i in oniom command", target+1);
         error->universe_all(FLERR, msg);
       }
 
@@ -99,7 +99,7 @@ FixONIOM::FixONIOM(LAMMPS *lmp, int narg, char **arg) :
       int target = force->inumeric(FLERR, arg[iarg+1])-1;
       if((target < 1 ) || (target>=universe->nworlds)){
         char msg[40];
-        sprintf(msg, "Invalid partition %i in oniom command", target);
+        sprintf(msg, "Invalid partition %i in oniom command", target+1);
         error->universe_all(FLERR, msg);
       }
 
@@ -138,7 +138,7 @@ FixONIOM::FixONIOM(LAMMPS *lmp, int narg, char **arg) :
       int low = force->inumeric(FLERR, arg[iarg+1])-1;
       if((low < 1 ) || (low>=universe->nworlds)){
         char msg[40];
-        sprintf(msg, "Invalid partition %i in oniom command", low);
+        sprintf(msg, "Invalid partition %i in oniom command", low+1);
         error->universe_all(FLERR, msg);
       }
 
@@ -146,7 +146,7 @@ FixONIOM::FixONIOM(LAMMPS *lmp, int narg, char **arg) :
       int high = force->inumeric(FLERR, arg[iarg+2])-1;
       if((high < 1 ) || (high>=universe->nworlds)){
         char msg[40];
-        sprintf(msg, "Invalid partition %i in oniom command", high);
+        sprintf(msg, "Invalid partition %i in oniom command", high+1);
         error->universe_all(FLERR, msg);
       }
 
@@ -183,6 +183,24 @@ FixONIOM::FixONIOM(LAMMPS *lmp, int narg, char **arg) :
       error->universe_all(FLERR, "Illegal fix oniom command");
     }
   }
+
+  /* on slave processes,
+   * we may be able to reuse forces if another
+   * fix_collect derived fix is the sole force provider
+   */
+  if(!master){
+    if((force->pair == nullptr)
+     &&(force->bond == nullptr)
+     &&(force->angle == nullptr)
+     &&(force->dihedral == nullptr)
+     &&(force->improper == nullptr)
+     &&(force->kspace == nullptr)
+     &&(modify->nfix == 1)){
+      if(dynamic_cast<FixCollect*>(modify->fix[0])){
+        reuse_forces = true;
+      }
+    }
+  }
 }
 
 /*********************************
@@ -198,12 +216,19 @@ FixONIOM::~FixONIOM()
 /* ---------------------------------------------------------------------- */
 int FixONIOM::setmask()
 {
-  return POST_INTEGRATE
-       | POST_FORCE
-       | MIN_PRE_FORCE
-       | MIN_POST_FORCE
-       | POST_RUN
-       | END_OF_STEP;
+  int res{0};
+  if(master){
+    res = POST_INTEGRATE
+        | POST_FORCE
+        | MIN_PRE_FORCE
+        | MIN_POST_FORCE
+        | POST_RUN;
+  }else{
+    res = INITIAL_INTEGRATE
+        | POST_FORCE
+        | END_OF_STEP;
+  }
+  return res;
 }
 
 /* ----------------------------------------------------------------------
@@ -308,7 +333,7 @@ void FixONIOM::init()
       }
     }
 
-    // {fter all is set up, do a first position synchronization
+    // after all is set up, do a first position synchronization
     receive_positions();
   }else{
     for(const auto& con: connections){
@@ -358,7 +383,8 @@ void FixONIOM::send_positions()
     }
 
     // collect updated positions in buffer on proc 0
-    collect_lammps(coll, atom->x);
+    gather_root(coll, atom->x);
+    coll.state = collection_t::State::Positions;
 
     // transmit to slave-partition
     MPI_Bcast(buffer.data(), coll.nat * sizeof(commdata_t), MPI_BYTE,
@@ -385,6 +411,7 @@ void FixONIOM::receive_positions()
   buffer.resize(coll.nat);
   MPI_Bcast(buffer.data(), coll.nat * sizeof(commdata_t),
             MPI_BYTE, 0, con.comm);
+  coll.state = collection_t::State::Positions;
 
   // update positions of relevant atoms
   for(int i=0; i<atom->nlocal; ++i){
@@ -403,8 +430,6 @@ void FixONIOM::receive_positions()
 void FixONIOM::receive_forces()
 {
   if(!master) return;
-  const int nlocal = atom->nlocal;
-  const int * const mask = atom->mask;
   double * const *const f = atom->f;
   const tagint * const tag = atom->tag;
 
@@ -421,15 +446,16 @@ void FixONIOM::receive_forces()
     buffer.resize(coll.nat);
     MPI_Bcast(buffer.data(), coll.nat * sizeof(commdata_t),
               MPI_BYTE, 0, con.comm);
+    coll.state = collection_t::State::Forces;
 
     // update forces of relevant atoms
     double fscale = (con.mode & MINUS) ? -1 : 1;
     for(int i=0; i<atom->nlocal; ++i){
       for(const auto& dat: buffer){
-        if(atom->tag[i] == coll.idx2tag[dat.idx]){
-          atom->f[i][0] += dat.x[0] * fscale;
-          atom->f[i][1] += dat.x[1] * fscale;
-          atom->f[i][2] += dat.x[2] * fscale;
+        if(tag[i] == coll.idx2tag[dat.idx]){
+          f[i][0] += dat.x[0] * fscale;
+          f[i][1] += dat.x[1] * fscale;
+          f[i][2] += dat.x[2] * fscale;
         }
       }
     }
@@ -451,7 +477,15 @@ void FixONIOM::send_forces()
     if (logfile) fprintf(logfile, fmt);
   }
 
-  collect_lammps(coll, atom->f);
+  // collect forces if needed
+  if(reuse_forces && coll.state != collection_t::State::Forces){
+    gather_root(coll, atom->f);
+    coll.state = collection_t::State::Forces;
+  }else if((comm->me == 0) && (verbose > 0)){
+    const char fmt[] = "ONIOM: reusing buffered forces\n";
+    if (screen) fprintf(screen, fmt);
+    if (logfile) fprintf(logfile, fmt);
+  }
 
   //transmit to master
   MPI_Bcast(buffer.data(), coll.nat * sizeof(commdata_t), MPI_BYTE,
@@ -460,14 +494,29 @@ void FixONIOM::send_forces()
 
 /* ---------------------------------------------------------------------- */
 
+void FixONIOM::initial_integrate(int)
+{
+  if(!master){
+    /* MD & MIN slave
+     *
+     * replaces actual integrating on slave partitions
+     */
+    receive_positions();
+  }
+}
+
 void FixONIOM::post_integrate()
 {
   if(master){
-    // MD master
+    /* MD master
+     *
+     * integrating is done by other fix or minimization,
+     * communicate result only
+     *
+     * should not conflict with other post_integrate fixes as
+     * we are created implicitely on execution
+     */
     send_positions();
-  }else{
-    // MD & MIN slave
-    receive_positions();
   }
 }
 
@@ -488,7 +537,9 @@ void FixONIOM::setup(int)
 void FixONIOM::min_setup(int)
 {
   // MIN master
-  receive_forces();
+  if(master){
+      receive_forces();
+  }
 }
 
 /* ---------------------------------------------------------------------- */
@@ -509,22 +560,24 @@ void FixONIOM::post_force(int)
 void FixONIOM::min_pre_force(int)
 {
   // MIN master
-  // tell slaves to continue faux MD after first step
-  if(!ran_once){
-      ran_once = true;
-  }else{
-    if((comm->me == 0) && (verbose > 0)){
-      const char msg[] = "ONIOM: Minimization not converged, continuing slave-MDs\n";
-      if (screen) fprintf(screen, msg);
-      if (logfile) fprintf(logfile, msg);
+  if(master){
+    // tell slaves to continue faux MD after first step
+    if(!ran_once){
+        ran_once = true;
+    }else{
+      if((comm->me == 0) && (verbose > 0)){
+        const char msg[] = "ONIOM: Minimization not converged, continuing slave-MDs\n";
+        if (screen) fprintf(screen, msg);
+        if (logfile) fprintf(logfile, msg);
+      }
+      for(auto& con: connections){
+        auto root = (comm->me == 0) ? MPI_ROOT : MPI_PROC_NULL;
+        uint8_t f{false};
+        MPI_Bcast(&f, 1, MPI_BYTE, root, con.comm);
+      }
     }
-    for(auto& con: connections){
-      auto root = (comm->me == 0) ? MPI_ROOT : MPI_PROC_NULL;
-      uint8_t f{false};
-      MPI_Bcast(&f, 1, MPI_BYTE, root, con.comm);
-    }
+    send_positions();
   }
-  send_positions();
 }
 
 /* ---------------------------------------------------------------------- */
@@ -532,7 +585,9 @@ void FixONIOM::min_pre_force(int)
 void FixONIOM::min_post_force(int)
 {
   // MIN master
-  receive_forces();
+  if(master){
+    receive_forces();
+  }
 }
 
 /* ---------------------------------------------------------------------- */

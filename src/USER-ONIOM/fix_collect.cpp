@@ -84,19 +84,24 @@ std::shared_ptr<FixCollect::collection_t> FixCollect::get_collection(char *group
   auto coll = std::make_shared<collection_t>();
   coll->nat = nat;
   coll->group_id = group_id;
-  collect_tags(group->bitmask[group_id], *coll);
+  coll->group_bit = group->bitmask[group_id];
+  collect_tags(*coll);
   collections[group_name] = coll;
   return coll;
 }
 
-void FixCollect::collect_tags(int groupmask, collection_t& coll)
+void FixCollect::collect_tags(collection_t& coll)
 {
+  const int *const mask = atom->mask;
+  const tagint * const tag = atom->tag;
+  const auto& nlocal = atom->nlocal;
+
   // collect process-local tags
   std::vector<tagint> tmp{};
   tmp.reserve(static_cast<size_t>(coll.nat));
-  for(int i=0; i<atom->nlocal; ++i){
-    if(atom->mask[i] & groupmask)
-      tmp.push_back(atom->tag[i]);
+  for(int i=0; i<nlocal; ++i){
+    if(mask[i] & coll.group_bit)
+      tmp.push_back(tag[i]);
   }
 
   // gather number of tags
@@ -121,17 +126,18 @@ void FixCollect::collect_tags(int groupmask, collection_t& coll)
   }
 }
 
-void FixCollect::collect_lammps(collection_t &coll, double **source)
+void FixCollect::gather_root(collection_t &coll, double **source)
 {
   const int *const mask = atom->mask;
   const tagint * const tag = atom->tag;
+  const auto& nlocal = atom->nlocal;
   auto& buffer = coll.buffer;
 
   // collect process-local atom positions
   buffer.clear();
   buffer.reserve(static_cast<size_t>(coll.nat));
-  for(int i=0; i<atom->nlocal; ++i){
-    if(mask[i] & groupbit){
+  for(int i=0; i<nlocal; ++i){
+    if(mask[i] & coll.group_bit){
       buffer.push_back({coll.tag2idx[tag[i]], {source[i][0], source[i][1], source[i][2]}});
     }
   }
@@ -151,5 +157,78 @@ void FixCollect::collect_lammps(collection_t &coll, double **source)
   MPI_Gatherv((comm->me == 0) ? MPI_IN_PLACE : buffer.data(),
               send_count, MPI_BYTE,
               buffer.data(), recv_count_buf.data(), displs_buf.data(), MPI_BYTE, 0, world);
+}
 
+void FixCollect::gather_all(collection_t &coll, double **source)
+{
+  const int *const mask = atom->mask;
+  const tagint *const tag = atom->tag;
+  std::vector<commdata_t> tmp;
+
+  // collect process-local atom positions
+  tmp.reserve(static_cast<size_t>(coll.nat));
+  for(int i=0; i<atom->nlocal; ++i){
+    if(mask[i] & coll.group_bit){
+      tmp.push_back({coll.tag2idx[tag[i]], {source[i][0], source[i][1], source[i][2]}});
+    }
+  }
+
+  // collect each proc's number of atoms
+  int send_count = tmp.size() * sizeof(commdata_t);
+  MPI_Allgather(&send_count, 1, MPI_INT, recv_count_buf.data(), 1, MPI_INT, world);
+
+  // construct displacement
+  displs_buf[0] = 0;
+  for(int i=1; i<universe->nprocs; ++i){
+    displs_buf[i] = displs_buf[i-1]+recv_count_buf[i-1];
+  }
+
+  // collect in buffer on all procs
+  auto& buffer = coll.buffer;
+  buffer.clear();
+  buffer.resize(static_cast<size_t>(coll.nat));
+  MPI_Allgatherv(tmp.data(), send_count, MPI_BYTE, buffer.data(),
+                 recv_count_buf.data(), displs_buf.data(), MPI_BYTE, world);
+}
+
+void FixCollect::gather_all_inplace(collection_t &coll, double **source)
+{
+  const int *const mask = atom->mask;
+  const tagint *const tag = atom->tag;
+  auto& buffer = coll.buffer;
+
+  // collect process-local atom positions
+  buffer.clear();
+  buffer.reserve(static_cast<size_t>(coll.nat));
+  for(int i=0; i<atom->nlocal; ++i){
+    if(mask[i] & coll.group_bit){
+      buffer.push_back({coll.tag2idx[tag[i]], {source[i][0], source[i][1], source[i][2]}});
+    }
+  }
+
+  // collect each proc's number of atoms
+  int send_count = buffer.size() * sizeof(commdata_t);
+  MPI_Allgather(&send_count, 1, MPI_INT, recv_count_buf.data(), 1, MPI_INT, world);
+
+  // construct displacement
+  displs_buf[0] = 0;
+  for(int i=1; i<universe->nprocs; ++i){
+    displs_buf[i] = displs_buf[i-1]+recv_count_buf[i-1];
+  }
+
+  // shift data so we can use MPI_IN_PLACE by reverse-iterating
+  auto count = buffer.size();
+  buffer.resize(static_cast<size_t>(coll.nat));
+  auto end = buffer.begin();
+  auto orig = end + count;
+  auto shift = orig + displs_buf[comm->me] / sizeof(commdata_t);
+  while(orig > end){
+      --orig;
+      --shift;
+      *shift = *orig;
+  }
+
+  // collect in buffer on all procs
+  MPI_Allgatherv(MPI_IN_PLACE, send_count, MPI_BYTE, buffer.data(),
+                 recv_count_buf.data(), displs_buf.data(), MPI_BYTE, world);
 }

@@ -34,6 +34,7 @@ class FixONIOM : public FixCollect {
   int setmask() override;
   void init() override;
 
+  void initial_integrate(int) override;
   void post_integrate() override;
   void setup(int) override;
   void min_setup(int) override;
@@ -66,6 +67,7 @@ class FixONIOM : public FixCollect {
   std::vector<conn_t> connections{};
 
  private:
+  bool reuse_forces{false};
   MPI_Comm connect_to_slave(int target);
   MPI_Comm connect_to_master();
 };

@@ -37,29 +37,11 @@ class FixQE : public FixCollect {
   // map atoms between LAMMPS-tags and QE-index
   std::shared_ptr<collection_t> qm_coll{nullptr};
   std::shared_ptr<collection_t> ec_coll{nullptr};
-//  bigint nqm{}, nec{}; // number of QM and EC atoms
-//  std::vector<tagint> qm_idx2tag{};
-//  std::vector<tagint> ec_idx2tag{};
-//  std::map<tagint, int> qm_tag2idx{};
-//  std::map<tagint, int> ec_tag2idx{};
-//  void collect_tags(int groupmask, bigint nat,
-//                    std::vector<tagint>& idx2tag,
-//                    std::map<tagint, int>& tag2idx);
 
   // communicate positions, forces and energies back and forth
   double escale{}, fscale{}; // scale factor for energies and forces
   void collect_positions();
   void distribute_forces();
-
-  // communication structures
-//  struct commdata_t{
-//    int tag;
-//    double x,y,z;
-//  };
-//  std::vector<commdata_t> comm_buf{}; // buffer for LAMMPS-internal communication
-//  double** qm_buf{nullptr}; // buffer for communicating qm-atoms to QE
-//  double** ec_buf{nullptr}; // buffer for communicating ec-atoms to QE
-//  int *recv_count_buf, *displs_buf; // buffer for variable-size MPI collectives
 
   // link atoms
   struct linkgroup{
