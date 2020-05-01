@@ -22,7 +22,6 @@
 
 #include "run.h"
 #include "minimize.h"
-#include "integrate.h"
 
 #include "timer.h"
 
@@ -44,72 +43,63 @@ using namespace LAMMPS_NS;
  ****************************************/
 void Oniom::command(int narg, char **arg)
 {
-  if(strcmp(arg[0], "run")==0){
-    run(narg-1, &arg[1]);
-  }else if(strcmp(arg[0], "minimize")==0){
-    minimize(narg-1, &arg[1]);
-  }else{
-    error->universe_all(FLERR, "Illegal oniom command");
-  }
-}
-
-void Oniom::run(int narg, char **arg)
-{
-  // extract run call
-  int nrunarg = -1;
+  // scan for first oniom command
+  int ncmdarg = -1;
   for(int i=0; i<narg; ++i){
-    if((strcmp(arg[i], "group")==0) ||
-       (strcmp(arg[i], "verbose")==0)){
-      nrunarg = i;
-      break;
+    if(!strcmp(arg[i], "group") ||
+       !strcmp(arg[i], "plus") ||
+       !strcmp(arg[i], "minus") ||
+       !strcmp(arg[i], "verbose")){
+        ncmdarg = i;
+        break;
     }
   }
-  if(nrunarg == -1){
-    error->universe_all(FLERR, "Illegal oniom run command");
+  if(ncmdarg == -1){
+      error->universe_one(FLERR, "Illegal oniom command: oniom arguments missing");
+      // could be universe_all, but would prob. break if user prefixes the oniom call with a partition cmd
   }
-  // create oniom fix
-  mkFix(narg-nrunarg, &arg[nrunarg]);
 
-  // perform calculation
-  Run run{lmp};
-  run.command(nrunarg, arg);
+  // create oniom fix
+  auto fix = mkFix(narg-ncmdarg, &arg[ncmdarg]);
+
+  // execute command
+  if(strcmp(arg[0], "run")==0){
+    run(ncmdarg-1, &arg[1], fix);
+  }else if(strcmp(arg[0], "minimize")==0){
+    minimize(ncmdarg-1, &arg[1], fix);
+  }else{
+    char msg[50];
+    sprintf(msg, "Illegal oniom command: command %s not supported", arg[0]);
+    error->universe_one(FLERR, msg);
+  }
 
   // delete oniom fix
   modify->delete_fix("ONIOM");
 }
 
-void Oniom::minimize(int narg, char **arg)
+void Oniom::run(int narg, char **arg, FixONIOM *fix)
 {
-  // extract minimize call
-  int nminarg = -1;
-  for(int i=0; i<narg; ++i){
-    if((strcmp(arg[i], "group")==0) ||
-       (strcmp(arg[i], "verbose")==0)){
-      nminarg = i;
-      break;
-    }
-  }
-  if(nminarg != 4){
-    error->universe_all(FLERR, "Illegal oniom minimize command");
-  }
-  // create oniom fix
-  auto fix = mkFix(narg-nminarg, &arg[nminarg]);
+  fix->minimize = false;
+  // perform calculation
+  Run run{lmp};
+  run.command(narg, arg);
+}
+
+void Oniom::minimize(int narg, char **arg, FixONIOM *fix)
+{
   fix->minimize = true;
 
   // perform calculation
   if(fix->master){
       // master performs minimization
       Minimize min{lmp};
-      min.command(nminarg, arg);
+      min.command(narg, arg);
   }else{
       // slave performs faux md with N = maxeval
       Run run{lmp};
       run.command(1, &arg[3]);
       timer->reset_timeout();
   }
-
-  // delete oniom fix
-  modify->delete_fix("ONIOM");
 }
 
 FixONIOM* Oniom::mkFix(int narg, char **arg)

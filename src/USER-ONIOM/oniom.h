@@ -30,8 +30,8 @@ class Oniom : protected Pointers {
   Oniom(class LAMMPS *l): Pointers{l} {};
   void command(int, char **);
  private:
-  void run(int, char **);
-  void minimize(int, char **);
+  void run(int, char **, FixONIOM*);
+  void minimize(int, char **, FixONIOM*);
   FixONIOM* mkFix(int, char **);
 };
 

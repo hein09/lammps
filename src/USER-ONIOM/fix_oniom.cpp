@@ -188,13 +188,17 @@ FixONIOM::FixONIOM(LAMMPS *lmp, int narg, char **arg) :
    * we may be able to reuse forces if another
    * fix_collect derived fix is the sole force provider
    */
+  auto no_style = [](const char *style){
+    return !strcmp(style, "zero")
+        || !strcmp(style, "none");
+  };
   if(!master){
-    if((force->pair == nullptr)
-     &&(force->bond == nullptr)
-     &&(force->angle == nullptr)
-     &&(force->dihedral == nullptr)
-     &&(force->improper == nullptr)
-     &&(force->kspace == nullptr)
+    if(no_style(force->pair_style)
+     &&no_style(force->bond_style)
+     &&no_style(force->angle_style)
+     &&no_style(force->dihedral_style)
+     &&no_style(force->improper_style)
+     &&no_style(force->kspace_style)
      &&(modify->nfix == 1)){
       if(dynamic_cast<FixCollect*>(modify->fix[0])){
         reuse_forces = true;
@@ -342,8 +346,12 @@ void FixONIOM::init()
       int nat;
       MPI_Bcast(&nat, 1, MPI_INT, 0, con.comm);
 
-      if(coll.nat != nat)
-        error->all(FLERR, "Inconsistent number of MC atoms");
+      if(coll.nat != nat) {
+        char msg[90] ;
+        sprintf(msg, "Inconsistent number of ONIOM atoms on slave %d: is %d, should be %ld",
+                con.target, nat, coll.nat);
+        error->all(FLERR, msg);
+      }
 
       // report tags if requested
       if((comm->me == 0) && (verbose > 1)){

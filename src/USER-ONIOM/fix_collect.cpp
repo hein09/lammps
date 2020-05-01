@@ -21,7 +21,6 @@
 #include "comm.h"
 #include "error.h"
 #include "group.h"
-#include "universe.h"
 
 #include <algorithm>
 #include <cstring>
@@ -36,8 +35,8 @@ FixCollect::FixCollect(LAMMPS *l, int narg, char **arg):
     Fix{l, narg, arg}
 {
   // initialize buffers for variable-size collectives
-  recv_count_buf.resize(universe->nprocs);
-  displs_buf.resize(universe->nprocs);
+  recv_count_buf.resize(comm->nprocs);
+  displs_buf.resize(comm->nprocs);
 }
 
 double FixCollect::memory_usage()
@@ -75,7 +74,7 @@ std::shared_ptr<FixCollect::collection_t> FixCollect::get_collection(char *group
     sprintf(msg, "Invalid group %s in fix %s", group_name, style);
     error->all(FLERR, msg);
   }
-  bigint nat = group->count(igroup);
+  bigint nat = group->count(group_id);
   if(nat > MAXSMALLINT){
     char msg[70];
     sprintf(msg, "Too many atoms in group %s for fix %s", group_name, style);
@@ -110,7 +109,7 @@ void FixCollect::collect_tags(collection_t& coll)
 
   // construct displacement
   displs_buf[0] = 0;
-  for(int i=1; i<universe->nprocs; ++i){
+  for(int i=1; i<comm->nprocs; ++i){
     displs_buf[i] = displs_buf[i-1]+recv_count_buf[i-1];
   }
 
@@ -148,7 +147,7 @@ void FixCollect::gather_root(collection_t &coll, double **source)
 
   // construct displacement
   displs_buf[0] = 0;
-  for(int i=1; i<universe->nprocs; ++i){
+  for(int i=1; i<comm->nprocs; ++i){
     displs_buf[i] = displs_buf[i-1]+recv_count_buf[i-1];
   }
 
@@ -179,7 +178,7 @@ void FixCollect::gather_all(collection_t &coll, double **source)
 
   // construct displacement
   displs_buf[0] = 0;
-  for(int i=1; i<universe->nprocs; ++i){
+  for(int i=1; i<comm->nprocs; ++i){
     displs_buf[i] = displs_buf[i-1]+recv_count_buf[i-1];
   }
 
@@ -212,7 +211,7 @@ void FixCollect::gather_all_inplace(collection_t &coll, double **source)
 
   // construct displacement
   displs_buf[0] = 0;
-  for(int i=1; i<universe->nprocs; ++i){
+  for(int i=1; i<comm->nprocs; ++i){
     displs_buf[i] = displs_buf[i-1]+recv_count_buf[i-1];
   }
 
