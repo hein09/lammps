@@ -117,10 +117,10 @@ FixQE::FixQE(LAMMPS *l, int narg, char **arg):
     }else if(strcmp(arg[iarg], "link") == 0){
       int nlink = force->inumeric(FLERR, arg[iarg+1]);
       linkatoms.resize(nlink);
-      for(int i=0; i<nlink; i+=2){
-        linkatoms[i] = {force->inumeric(FLERR, arg[iarg+2+i]),
+      for(int i=0; i<nlink; ++i){
+        linkatoms[i] = {force->inumeric(FLERR, arg[iarg+2+2*i]),
                         -1,
-                        force->numeric(FLERR, arg[iarg+3+i])};
+                        force->numeric(FLERR, arg[iarg+3+2*i])};
       }
       auto last = std::unique(linkatoms.begin(), linkatoms.end(),
                               [](const linkgroup& l, const linkgroup& r)
@@ -201,21 +201,19 @@ FixQE::FixQE(LAMMPS *l, int narg, char **arg):
                   style, link.link_atom);
           error->one(FLERR, msg);
       }
-      auto neighbors = get_bound_neighbors(link.link_atom, groupbit, 0);
-      if(comm->me == 0){
-        if(neighbors.empty()){
-          char msg[50];
-          sprintf(msg, "Fix %s: Link atom %d has no neighbors in QM group.",
-                  style, link.link_atom);
-          error->one(FLERR, msg);
-        }else if(neighbors.size()>1){
-          char msg[50];
-          sprintf(msg, "Fix %s: Link atom %d is bound to multiple QM atoms.",
-                  style, link.link_atom);
-          error->one(FLERR, msg);
-        }else{
-          link.qm_atom = neighbors.front();
-        }
+      auto neighbors = get_bound_neighbors(link.link_atom, qm_coll->idx2tag, 0);
+      if(neighbors.empty()){
+        char msg[50];
+        sprintf(msg, "Fix %s: Link atom %d has no neighbors in QM group.",
+                style, link.link_atom);
+        error->all(FLERR, msg);
+      }else if(neighbors.size()>1){
+        char msg[50];
+        sprintf(msg, "Fix %s: Link atom %d is bound to multiple QM atoms.",
+                style, link.link_atom);
+        error->all(FLERR, msg);
+      }else{
+        link.qm_atom = neighbors.front();
       }
     }
     // if needed, find atoms whose charges need to be modified
@@ -227,7 +225,7 @@ FixQE::FixQE(LAMMPS *l, int narg, char **arg):
       }else if(charge_scheme == charge_t::Z2){
         // ignore charge of 1-2 neighbors
         for(const auto& link: linkatoms){
-          auto neighbors = get_bound_neighbors(link.link_atom, ecmask, 0);
+          auto neighbors = get_bound_neighbors(link.link_atom, ec_coll->idx2tag, 0);
           for(const auto& n: neighbors){
             chargeatoms.push_back({n, -1});
           }
@@ -235,7 +233,7 @@ FixQE::FixQE(LAMMPS *l, int narg, char **arg):
       }else if(charge_scheme == charge_t::Z3){
         // ignore charge of 1-2 and 1-3 neighbors
         for(const auto& link: linkatoms){
-          auto neighbors = get_bound_neighbors(link.link_atom, ecmask, 1);
+          auto neighbors = get_bound_neighbors(link.link_atom, ec_coll->idx2tag, 1);
           for(const auto& n: neighbors){
             chargeatoms.push_back({n, -1});
           }
@@ -243,7 +241,7 @@ FixQE::FixQE(LAMMPS *l, int narg, char **arg):
       }else if((charge_scheme == charge_t::RCD) || (charge_scheme == charge_t::CS)){
         // create virtual point charges depending on 1-2 neighbors
         for(const auto& link: linkatoms){
-          auto neighbors = get_bound_neighbors(link.link_atom, ecmask, 0);
+          auto neighbors = get_bound_neighbors(link.link_atom, ec_coll->idx2tag, 0);
           for(const auto& n: neighbors){
             chargeatoms.push_back({n, link.link_atom});
           }
@@ -329,33 +327,34 @@ void FixQE::collect_positions()
   }
 }
 
-std::vector<tagint> FixQE::get_bound_neighbors(tagint tag, int mask, int dist)
+std::vector<tagint> FixQE::get_bound_neighbors(tagint tag, const std::vector<tagint> &grouptags, int dist)
 {
-  int idx = atom->map(tag);
-  std::vector<tagint> list;
-  if(idx != -1){
-    // collect bound neighbors in requested group
-    const auto* const neighbors = atom->special[idx];
-    for(int i=0; i<atom->nspecial[idx][dist]; ++i){
-      if(atom->map(neighbors[i]) == -1){
-        error->one(FLERR, "Bound neighbor not a local or ghost atom");
-      }
-      if(atom->mask[atom->map(neighbors[i])] & mask){
-        list.push_back(neighbors[i]);
-      }
+  // TODO: this depends on atom->special being indexed by local id and only being available locally. True?
+  std::vector<tagint> neighs;
+  int idx = -1;
+  const auto nlocal = atom->nlocal;
+  const auto tags = atom->tag;
+  for(int i=0; i < nlocal; ++i){
+    if(tags[i] == tag){
+      idx = i;
+      break;
     }
-    // if tagged atom is on another process, transfer it to proc 0
-    if(comm->me != 0){
-      auto s = static_cast<int>(list.size());
-      MPI_Send(&s, 1, MPI_INT, 0, tag, world);
-      MPI_Send(list.data(), s, MPI_LMP_TAGINT, 0, tag, world);
-    }
-  }else if((comm->me == 0) && (idx == -1)){
-    // if tagged atom is on another process, transfer it to proc 0
-    int s{};
-    MPI_Recv(&s, 1, MPI_INT, MPI_ANY_SOURCE, tag, world, MPI_STATUS_IGNORE);
-    list.resize(s);
-    MPI_Recv(list.data(), s, MPI_LMP_TAGINT, MPI_ANY_SOURCE, tag, world, MPI_STATUS_IGNORE);
   }
-  return list;
+  int buf[2] = {0, 0}; // {source-process, nspecial}
+  if(idx != -1){
+    // we own the requested source atom, broadcast bound atoms
+    buf[0] = comm->me;
+    buf[1] = atom->nspecial[idx][dist];
+    neighs.insert(neighs.begin(), atom->special[idx], atom->special[idx]+buf[1]);
+  }
+  MPI_Allreduce(MPI_IN_PLACE, &buf, 2, MPI_INT, MPI_SUM, world);
+  neighs.resize(buf[1]);
+  MPI_Bcast(neighs.data(), buf[1], MPI_LMP_TAGINT, buf[0], world);
+  // check if bound atoms are part of group
+  std::vector<tagint> groupneighs;
+  std::sort(neighs.begin(), neighs.end());
+  std::set_intersection(neighs.begin(), neighs.end(),
+                        grouptags.begin(), grouptags.end(),
+                        std::back_inserter(groupneighs));
+  return groupneighs;
 }

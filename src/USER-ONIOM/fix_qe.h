@@ -55,7 +55,7 @@ class FixQE : public FixCollect {
   enum class charge_t{Z1, Z2, Z3, RCD, CS};
   charge_t charge_scheme{charge_t::Z1};
   std::vector<std::pair<tagint, tagint>> chargeatoms; // tags of atoms with modified charges
-  std::vector<tagint> get_bound_neighbors(tagint tag, int groupmask, int dist);
+  std::vector<tagint> get_bound_neighbors(tagint tag, const std::vector<tagint> &grouptags, int dist);
  private:
   void distribute_forces_impl(collection_t& coll);
 };
