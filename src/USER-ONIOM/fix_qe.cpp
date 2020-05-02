@@ -307,6 +307,7 @@ void FixQE::collect_positions()
 //    MPI_Bcast(buffer.data(), buffer.size() * sizeof(commdata_t), MPI_BYTE, 0, world);
 //    gather_all(*qm_coll, atom->x);
     gather_all_inplace(*qm_coll, atom->x);
+    com_to_origin(*qm_coll);
     qm_coll->state = collection_t::State::Positions;
   }
   // modify positions of link atoms

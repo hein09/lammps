@@ -19,6 +19,7 @@
 
 #include "atom.h"
 #include "comm.h"
+#include "domain.h"
 #include "error.h"
 #include "group.h"
 
@@ -230,4 +231,37 @@ void FixCollect::gather_all_inplace(collection_t &coll, double **source)
   // collect in buffer on all procs
   MPI_Allgatherv(MPI_IN_PLACE, send_count, MPI_BYTE, buffer.data(),
                  recv_count_buf.data(), displs_buf.data(), MPI_BYTE, world);
+}
+
+void FixCollect::com_to_origin(collection_t &coll)
+{
+  double com[3] = {0,0,0};
+  for(const auto &dat: coll.buffer){
+    com[0] += dat.x[0];
+    com[1] += dat.x[1];
+    com[2] += dat.x[2];
+  }
+  com[0] /= coll.nat;
+  com[1] /= coll.nat;
+  com[2] /= coll.nat;
+  for(auto &dat: coll.buffer){
+    dat.x[0] -= com[0];
+    dat.x[1] -= com[1];
+    dat.x[2] -= com[2];
+  }
+}
+
+std::array<double,3> FixCollect::get_center()
+{
+  std::array<double,3> coc;
+  if(domain->triclinic){
+    coc[0] = 0.5 * (domain->boxhi[0] - domain->boxlo[0] + domain->xy + domain->xz);
+    coc[1] = 0.5 * (domain->boxhi[1] - domain->boxlo[1] + domain->yz);
+    coc[2] = 0.5 * (domain->boxhi[2] - domain->boxlo[2]);
+  }else{
+    coc[0] = 0.5 * (domain->boxhi[0] - domain->boxlo[0]);
+    coc[1] = 0.5 * (domain->boxhi[1] - domain->boxlo[1]);
+    coc[2] = 0.5 * (domain->boxhi[2] - domain->boxlo[2]);
+  }
+  return coc;
 }

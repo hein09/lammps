@@ -391,8 +391,11 @@ void FixONIOM::send_positions()
     }
 
     // collect updated positions in buffer on proc 0
-    gather_root(coll, atom->x);
-    coll.state = collection_t::State::Positions;
+    if(coll.state != collection_t::State::Positions){
+      gather_root(coll, atom->x);
+      com_to_origin(coll);
+      coll.state = collection_t::State::Positions;
+    }
 
     // transmit to slave-partition
     MPI_Bcast(buffer.data(), coll.nat * sizeof(commdata_t), MPI_BYTE,
@@ -422,12 +425,13 @@ void FixONIOM::receive_positions()
   coll.state = collection_t::State::Positions;
 
   // update positions of relevant atoms
+  auto coc = get_center();
   for(int i=0; i<atom->nlocal; ++i){
     for(const auto& dat: buffer){
       if(atom->tag[i] == coll.idx2tag[dat.idx]){
-        atom->x[i][0] = dat.x[0];
-        atom->x[i][1] = dat.x[1];
-        atom->x[i][2] = dat.x[2];
+        atom->x[i][0] = dat.x[0] + coc[0];
+        atom->x[i][1] = dat.x[1] + coc[1];
+        atom->x[i][2] = dat.x[2] + coc[2];
       }
     }
   }

@@ -69,7 +69,6 @@ MODULE fix_pw
       CHARACTER(LEN=80) :: infile_, outfile_
       INTEGER :: i
       LOGICAL, SAVE :: first_time=.true.
-      REAL(DP), DIMENSION(3) :: com
       REAL(DP), DIMENSION(3) :: coc
       !
       ! handle filenames, redirect output to outfile
@@ -127,16 +126,9 @@ MODULE fix_pw
         RETURN
       END IF
       ! initialize positions from lammps
-      ! center of cell
-      coc = MATMUL(at, (/0.5d0, 0.5d0, 0.5d0/))
-      ! center of molecule
-      com = (/0, 0, 0/)
+      coc = MATMUL(at, (/0.5d0, 0.5d0, 0.5d0/)) ! center of cell
       DO i = 1, nat
-        com = com + buf_qm(i)%x
-      END DO
-      com = com / (nat * alat * bohr_radius_angs)
-      DO i = 1, nat
-          tau(:, buf_qm(i)%idx+1) = buf_qm(i)%x / (alat * bohr_radius_angs) + coc - com
+          tau(:, buf_qm(i)%idx+1) = buf_qm(i)%x / (alat * bohr_radius_angs) + coc
       END DO
       ! inform about gamma-algorithms
       if ( gamma_only ) write(stdout, *) "gamma-point specific algorithms are used"
@@ -184,21 +176,12 @@ MODULE fix_pw
       USE mp,            ONLY: mp_bcast
       IMPLICIT NONE
       TYPE(commdata_t), INTENT(IN) :: buf_qm(nat)
-      REAL(DP), DIMENSION(3) :: com
       REAL(DP), DIMENSION(3) :: coc
       INTEGER :: i
       ! re-center positions
-      ! center of cell
-      coc = MATMUL(at, (/0.5d0, 0.5d0, 0.5d0/))
-      ! center of molecule
-      !com = SUM(pos_qm, dim=2) / (nat * alat * bohr_radius_angs)
-      com = (/0, 0, 0/)
+      coc = MATMUL(at, (/0.5d0, 0.5d0, 0.5d0/)) ! center of cell
       DO i = 1, nat
-        com(:) = com(:) + buf_qm(i)%x
-      END DO
-      com = com / (nat * alat * bohr_radius_angs)
-      DO i = 1, nat
-          tau(:, buf_qm(i)%idx+1) = buf_qm(i)%x / (alat * bohr_radius_angs) + coc - com
+          tau(:, buf_qm(i)%idx+1) = buf_qm(i)%x / (alat * bohr_radius_angs) + coc
       END DO
       ! update wavefunctions
       CALL update_pot()

@@ -60,6 +60,10 @@ class FixCollect : public Fix {
   void gather_all(collection_t& coll, double** source);
   void gather_all_inplace(collection_t& coll, double** source);
 
+  // modify positions to get transferable representations
+  void com_to_origin(collection_t& coll);
+  std::array<double,3> get_center();
+
  private:
   std::vector<int> recv_count_buf, displs_buf; // buffer for variable-size MPI collective strides
   void collect_tags(collection_t& coll);
